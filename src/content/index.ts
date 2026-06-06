@@ -320,6 +320,7 @@ class FloatingWidget {
             <span class="ls-fl-dot"></span>
             <span>LINGUASYNC</span>
             <span class="ls-fl-pro">PRO</span>
+            <span style="font-size:9px;color:#475569;margin-left:4px">v4.0</span>
           </div>
           <div class="ls-fl-audio-bar">${Array.from({length:12}, (_,i) => `<span class="ls-fl-bar-seg" style="--i:${i}"></span>`).join('')}</div>
         </div>
