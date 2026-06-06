@@ -269,6 +269,7 @@ class FloatingWidget {
   private recording = false;
   private tabAudioActive = false;
   private activeTab: 'record' | 'todo' = 'record';
+  private panelExpanded = false;
   private todos: TodoItem[] = [];
 
   onToggle: () => void = () => {};
@@ -305,6 +306,7 @@ class FloatingWidget {
       onboardClose: q('.ls-fl-onboard-close'),
       contentArea: q('.ls-fl-content-area'),
       dropdownBtn: q('.ls-fl-dropdown-btn'),
+      tabs: q('.ls-fl-tabs'),
     };
   }
 
@@ -343,7 +345,7 @@ class FloatingWidget {
             导出
           </button>
         </div>
-        <div class="ls-fl-tabs">
+        <div class="ls-fl-tabs" style="display:none">
           <div class="ls-fl-tab ls-fl-tab-record ls-fl-tab-active" data-tab="record">会议记录</div>
           <div class="ls-fl-tab ls-fl-tab-todo" data-tab="todo">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
@@ -351,7 +353,7 @@ class FloatingWidget {
           </div>
           <div class="ls-fl-tab-indicator"></div>
         </div>
-        <div class="ls-fl-content-area">
+        <div class="ls-fl-content-area" style="display:none">
           <div class="ls-fl-record-panel">
             <div class="ls-fl-transcript-list"></div>
           </div>
@@ -407,6 +409,16 @@ class FloatingWidget {
     // 标签页切换
     this.els.tabRecord.addEventListener('click', () => this.switchTab('record'));
     this.els.tabTodo.addEventListener('click', () => this.switchTab('todo'));
+    // 下拉箭头：展开/收起标签页区域
+    this.els.dropdownBtn.addEventListener('click', () => this.togglePanel());
+  }
+
+  /** 展开或收起底部的会议记录/智能待办标签页区域 */
+  private togglePanel() {
+    this.panelExpanded = !this.panelExpanded;
+    this.els.tabs.style.display = this.panelExpanded ? '' : 'none';
+    this.els.contentArea.style.display = this.panelExpanded ? '' : 'none';
+    this.els.dropdownBtn.classList.toggle('ls-fl-dropdown-open', this.panelExpanded);
   }
 
   private switchTab(tab: 'record' | 'todo') {
