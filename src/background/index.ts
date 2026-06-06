@@ -1,64 +1,21 @@
 /**
- * LinguaSync Pro - 后台 Service Worker
- * 管理扩展状态和消息传递
+ * LinguaSync Pro v2 - 后台 Service Worker
+ *
+ * 职责:
+ *  - 翻译请求分发 (MyMemory / OpenAI GPT)
+ *  - 标签页音频捕获协调 (tabCapture)
+ *  - 快捷键命令转发
+ *  - Offscreen Document 管理
  */
 
-interface TabState {
-  enabled: boolean;
-  language: string;
-}
+// ---------- 翻译 ----------
 
-const tabStates = new Map<number, TabState>();
-
-// 扩展安装时设置默认值
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.set({
-    defaultLanguage: 'en-US',
-    translationBackend: 'mymemory',
-    openaiApiKey: '',
-    autoStart: false,
-  });
-});
-
-// 监听来自 content script 的消息
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const tabId = sender.tab?.id;
-
-  if (message.type === 'GET_STATE' && tabId) {
-    const state = tabStates.get(tabId) || { enabled: false, language: 'en-US' };
-    sendResponse(state);
-  }
-
-  if (message.type === 'SET_STATE' && tabId) {
-    tabStates.set(tabId, message.state);
-    // 转发给 content script
-    chrome.tabs.sendMessage(tabId, {
-      type: 'STATE_CHANGED',
-      state: message.state,
-    });
-  }
-
-  if (message.type === 'TRANSLATE') {
-    handleTranslation(message.text, message.backend, message.apiKey)
-      .then(sendResponse)
-      .catch((err) => sendResponse({ error: err.message }));
-    return true; // 保持通道开放以异步响应
-  }
-
-  return true;
-});
-
-// 当标签页关闭时清理状态
-chrome.tabs.onRemoved.addListener((tabId) => {
-  tabStates.delete(tabId);
-});
-
-// 翻译处理
 async function handleTranslation(
   text: string,
   backend: string,
   apiKey: string
 ): Promise<{ translated: string }> {
+  // OpenAI GPT 翻译
   if (backend === 'openai' && apiKey) {
     try {
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -73,7 +30,7 @@ async function handleTranslation(
             {
               role: 'system',
               content:
-                '你是专业同声传译员，将文本翻译为流畅自然的中文。技术术语保留原文。仅输出翻译结果。',
+                '你是专业同声传译员，将文本翻译为流畅自然的中文。技术术语保留原文（如 React、API）。仅输出翻译结果，不加任何说明。',
             },
             { role: 'user', content: text },
           ],
@@ -82,7 +39,8 @@ async function handleTranslation(
         }),
       });
       const data = await res.json();
-      return { translated: data.choices?.[0]?.message?.content?.trim() || text };
+      const translated = data.choices?.[0]?.message?.content?.trim();
+      if (translated) return { translated };
     } catch {
       // 降级到 MyMemory
     }
@@ -98,8 +56,103 @@ async function handleTranslation(
       return { translated: data.responseData.translatedText };
     }
   } catch {
-    // 忽略
+    // ignore
   }
 
-  return { translated: `[翻译失败] ${text}` };
+  return { translated: text };
 }
+
+// ---------- 标签页音频捕获 ----------
+
+async function captureTabAudio(tabId: number): Promise<string | null> {
+  try {
+    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+    return String(streamId);
+  } catch {
+    return null;
+  }
+}
+
+// ---------- Offscreen Document ----------
+
+async function ensureOffscreenDocument() {
+  try {
+    const existingContexts = await (chrome.runtime as any).getContexts?.({
+      contextTypes: ['OFFSCREEN_DOCUMENT'],
+    });
+    if (existingContexts?.length > 0) return;
+  } catch {
+    // getContexts may not be available
+  }
+
+  try {
+    await (chrome.offscreen as any).createDocument({
+      url: 'offscreen.html',
+      reasons: ['USER_MEDIA'],
+      justification: 'Audio processing for speech recognition',
+    });
+  } catch {
+    // already exists or not supported
+  }
+}
+
+// ---------- 消息路由 ----------
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.local.set({
+    defaultLanguage: 'en-US',
+    translationBackend: 'mymemory',
+    openaiApiKey: '',
+    autoStart: false,
+    audioMode: 'microphone', // 'microphone' | 'tabAudio'
+  });
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const tabId = sender.tab?.id;
+
+  // 翻译请求
+  if (message.type === 'TRANSLATE') {
+    handleTranslation(message.text, message.backend, message.apiKey)
+      .then(sendResponse)
+      .catch((err: Error) => sendResponse({ error: err.message }));
+    return true;
+  }
+
+  // 标签页音频捕获请求
+  if (message.type === 'CAPTURE_TAB_AUDIO' && tabId) {
+    captureTabAudio(tabId).then((streamId) => {
+      sendResponse({ streamId });
+    });
+    return true;
+  }
+
+  // 初始化 Offscreen Document
+  if (message.type === 'ENSURE_OFFSCREEN') {
+    ensureOffscreenDocument().then(() => sendResponse({ ok: true }));
+    return true;
+  }
+
+  // 获取配置
+  if (message.type === 'GET_CONFIG') {
+    chrome.storage.local.get(
+      ['defaultLanguage', 'translationBackend', 'openaiApiKey', 'autoStart', 'audioMode'],
+      (config) => sendResponse(config)
+    );
+    return true;
+  }
+
+  return true;
+});
+
+// ---------- 快捷键转发 ----------
+
+chrome.commands.onCommand.addListener((command) => {
+  // 将快捷键转发给当前活动标签页的 content script
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tabId = tabs[0]?.id;
+    if (tabId) {
+      chrome.tabs.sendMessage(tabId, { type: 'COMMAND', command });
+    }
+  });
+});

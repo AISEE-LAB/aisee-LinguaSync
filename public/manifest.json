@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "LinguaSync Pro - AI 视频同传",
-  "version": "1.0.0",
-  "description": "在任何视频网页上浮现 AI 同声传译悬浮窗，实时翻译为中文",
-  "permissions": ["activeTab", "storage", "scripting"],
+  "version": "2.0.0",
+  "description": "在任何视频网页上浮现 AI 同声传译悬浮窗，支持标签页音频直采、视频内嵌字幕、快捷键操控",
+  "permissions": ["activeTab", "storage", "scripting", "tabCapture", "offscreen"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "index.html",
@@ -20,5 +20,15 @@
       "css": ["src/content/styles.css"],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "commands": {
+    "toggle-recording": {
+      "suggested_key": { "default": "Alt+T", "mac": "Alt+T" },
+      "description": "开始/停止同传"
+    },
+    "export-history": {
+      "suggested_key": { "default": "Alt+E", "mac": "Alt+E" },
+      "description": "导出翻译记录"
+    }
+  }
 }
