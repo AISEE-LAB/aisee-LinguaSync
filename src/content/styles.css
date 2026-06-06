@@ -238,7 +238,7 @@
   display: flex;
   align-items: center;
   gap: 0;
-  padding: 0;
+  padding: 0 12px;
   background: rgba(15, 23, 42, 0.95);
   border-top: 1px solid rgba(51,65,85,0.2);
   position: relative;
@@ -247,10 +247,8 @@
 .ls-fl-tab {
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 6px;
   padding: 10px 16px;
-  flex: 1;
   font-size: 13px;
   font-weight: 500;
   color: #64748b;
