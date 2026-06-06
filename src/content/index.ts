@@ -307,6 +307,7 @@ class FloatingWidget {
       contentArea: q('.ls-fl-content-area'),
       dropdownBtn: q('.ls-fl-dropdown-btn'),
       tabs: q('.ls-fl-tabs'),
+      toolbar: q('.ls-fl-toolbar'),
     };
   }
 
@@ -335,7 +336,7 @@ class FloatingWidget {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
         </div>
-        <div class="ls-fl-toolbar">
+        <div class="ls-fl-toolbar" style="display:none">
           <button class="ls-fl-tab-audio-btn" title="切换音频源">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
             <span class="ls-fl-mode-label">麦克风</span>
@@ -413,9 +414,10 @@ class FloatingWidget {
     this.els.dropdownBtn.addEventListener('click', () => this.togglePanel());
   }
 
-  /** 展开或收起底部的会议记录/智能待办标签页区域 */
+  /** 展开或收起底部的工具栏/会议记录/智能待办区域 */
   private togglePanel() {
     this.panelExpanded = !this.panelExpanded;
+    this.els.toolbar.style.display = this.panelExpanded ? '' : 'none';
     this.els.tabs.style.display = this.panelExpanded ? '' : 'none';
     this.els.contentArea.style.display = this.panelExpanded ? '' : 'none';
     this.els.dropdownBtn.classList.toggle('ls-fl-dropdown-open', this.panelExpanded);
@@ -438,7 +440,7 @@ class FloatingWidget {
   }
 
   private centerAtBottom() {
-    this.pos = { x: Math.max(10, (window.innerWidth - 580) / 2), y: window.innerHeight - 130 };
+    this.pos = { x: Math.max(10, (window.innerWidth - 580) / 2), y: window.innerHeight - 90 };
     this.root.style.left = `${this.pos.x}px`;
     this.root.style.top = `${this.pos.y}px`;
   }
