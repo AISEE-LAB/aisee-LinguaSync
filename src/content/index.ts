@@ -40,46 +40,128 @@ function findMainVideo(): HTMLVideoElement | null {
   return best;
 }
 
+// ========== 音频放大器 (Web Audio API) ==========
+
+class AudioAmplifier {
+  private ctx: AudioContext | null = null;
+  private source: MediaStreamAudioSourceNode | null = null;
+  private gain: GainNode | null = null;
+  private analyser: AnalyserNode | null = null;
+  private dest: MediaStreamAudioDestinationNode | null = null;
+  private audioEl: HTMLAudioElement | null = null;
+  private rafId = 0;
+
+  onLevel: (level: number) => void = () => {};
+
+  /** 放大音频流并通过扬声器输出，同时提供实时音量分析 */
+  amplify(stream: MediaStream, gainDb = 8): boolean {
+    try {
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) return false;
+
+      this.ctx = new AudioContext();
+      const audioOnly = new MediaStream(audioTracks);
+      this.source = this.ctx.createMediaStreamSource(audioOnly);
+
+      // 增益节点：默认 +8dB，轻声也能拾到
+      this.gain = this.ctx.createGain();
+      this.gain.gain.value = Math.pow(10, gainDb / 20); // ~2.5x
+
+      // 分析器：实时监测音量
+      this.analyser = this.ctx.createAnalyser();
+      this.analyser.fftSize = 256;
+      this.analyser.smoothingTimeConstant = 0.6;
+
+      // 输出到扬声器 → 麦克风拾取
+      this.dest = this.ctx.createMediaStreamDestination();
+
+      // 连接链路: source → gain → analyser → destination(speakers)
+      this.source.connect(this.gain);
+      this.gain.connect(this.analyser);
+      this.analyser.connect(this.ctx.destination); // 扬声器输出
+      this.analyser.connect(this.dest);            // 同时输出到 MediaStream（备用）
+
+      // 隐藏 audio 元素确保音频在某些浏览器中持续输出
+      this.audioEl = document.createElement('audio');
+      this.audioEl.srcObject = this.dest.stream;
+      this.audioEl.volume = 1.0;
+      this.audioEl.style.display = 'none';
+      document.body.appendChild(this.audioEl);
+      this.audioEl.play().catch(() => {});
+
+      this.startLevelMonitor();
+      return true;
+    } catch {
+      this.cleanup();
+      return false;
+    }
+  }
+
+  /** 获取当前实时音量 (0~1) */
+  getLevel(): number {
+    if (!this.analyser) return 0;
+    const buf = new Uint8Array(this.analyser.frequencyBinCount);
+    this.analyser.getByteFrequencyData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) sum += buf[i];
+    return Math.min(1, (sum / buf.length) / 128);
+  }
+
+  /** 设置增益 (dB) */
+  setGain(db: number) {
+    if (this.gain) this.gain.gain.value = Math.pow(10, db / 20);
+  }
+
+  private startLevelMonitor() {
+    const tick = () => {
+      this.onLevel(this.getLevel());
+      this.rafId = requestAnimationFrame(tick);
+    };
+    this.rafId = requestAnimationFrame(tick);
+  }
+
+  cleanup() {
+    cancelAnimationFrame(this.rafId);
+    if (this.audioEl) { this.audioEl.pause(); this.audioEl.srcObject = null; this.audioEl.remove(); this.audioEl = null; }
+    if (this.ctx && this.ctx.state !== 'closed') { this.ctx.close().catch(() => {}); }
+    this.ctx = null; this.source = null; this.gain = null; this.analyser = null; this.dest = null;
+  }
+}
+
 // ========== 标签页音频直采 ==========
 
 class TabAudioCapture {
   private stream: MediaStream | null = null;
-  private audioEl: HTMLAudioElement | null = null;
   private video: HTMLVideoElement | null = null;
   private originalMuted = false;
   private active = false;
+  private amplifier = new AudioAmplifier();
+
+  onLevel: (level: number) => void = () => {};
 
   /**
-   * 捕获当前标签页音频。
-   * 原理: getDisplayMedia 获取标签页音频流 → 通过隐藏 audio 元素播放 →
-   *       声音从扬声器输出 → Web Speech API (麦克风) 拾取。
+   * 捕获当前标签页音频并放大输出。
+   * 原理: getDisplayMedia → GainNode (+8dB 放大) → 扬声器 → Web Speech API (麦克风) 拾取
    * 同时静音原始视频避免双重声音。
    */
   async start(video: HTMLVideoElement): Promise<boolean> {
     try {
-      // 请求标签页音频捕获
       this.stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true, // 必须请求 video 才能选标签页
+        video: true,
         audio: true,
       } as any);
 
-      // 检查是否有音频轨道
       const audioTracks = this.stream.getAudioTracks();
-      if (audioTracks.length === 0) {
+      if (audioTracks.length === 0) { this.stop(); return false; }
+
+      // 通过放大器处理音频（+8dB 增益 + 实时音量监测）
+      if (!this.amplifier.amplify(this.stream, 8)) {
         this.stop();
         return false;
       }
 
-      // 只保留音频轨道
-      const audioOnlyStream = new MediaStream(audioTracks);
-
-      // 创建隐藏的 audio 元素播放捕获的音频
-      this.audioEl = document.createElement('audio');
-      this.audioEl.srcObject = audioOnlyStream;
-      this.audioEl.volume = 1.0;
-      this.audioEl.style.display = 'none';
-      document.body.appendChild(this.audioEl);
-      await this.audioEl.play();
+      // 实时音量回调
+      this.amplifier.onLevel = (lv) => this.onLevel(lv);
 
       // 静音原始视频（避免双重声音）
       this.video = video;
@@ -94,16 +176,13 @@ class TabAudioCapture {
     }
   }
 
+  getLevel(): number { return this.amplifier.getLevel(); }
+
   stop() {
+    this.amplifier.cleanup();
     if (this.stream) {
       this.stream.getTracks().forEach((t) => t.stop());
       this.stream = null;
-    }
-    if (this.audioEl) {
-      this.audioEl.pause();
-      this.audioEl.srcObject = null;
-      this.audioEl.remove();
-      this.audioEl = null;
     }
     if (this.video) {
       this.video.muted = this.originalMuted;
@@ -163,7 +242,7 @@ class SubtitleOverlay {
     this.originalEl.textContent = original;
     this.translatedEl.textContent = translated;
     this.overlay!.classList.add('ls-sub-visible', 'ls-sub-final');
-    this.hideTimer = setTimeout(() => this.hide(), 5000);
+    this.hideTimer = setTimeout(() => this.hide(), 8000);
   }
 
   hide() {
@@ -370,10 +449,12 @@ class SpeechEngine {
   private recognition: any = null;
   private running = false;
   private lang: string;
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
 
   onInterim: (text: string) => void = () => {};
   onFinal: (text: string) => void = () => {};
   onError: (err: string) => void = () => {};
+  onAudioLevel: (level: number) => void = () => {};
 
   constructor(lang = 'en-US') { this.lang = lang; }
 
@@ -383,35 +464,57 @@ class SpeechEngine {
 
   start() {
     if (!this.isSupported()) { this.onError('浏览器不支持语音识别'); return; }
+    if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = null; }
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     this.recognition = new SR();
     this.recognition.continuous = true;
     this.recognition.interimResults = true;
     this.recognition.lang = this.lang;
+    this.recognition.maxAlternatives = 1;
 
     this.recognition.onstart = () => { this.running = true; };
     this.recognition.onresult = (event: any) => {
       let interim = '', final = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const r = event.results[i];
-        if (r.isFinal) final += r[0].transcript;
-        else interim += r[0].transcript;
+        // 取置信度最高的结果
+        const best = r[0];
+        if (r.isFinal) final += best.transcript;
+        else interim += best.transcript;
       }
       if (interim) this.onInterim(interim);
       if (final) this.onFinal(final);
     };
     this.recognition.onerror = (event: any) => {
       if (event.error === 'no-speech' || event.error === 'aborted') return;
+      // audio-capture 和 network 错误时快速重试
+      if (event.error === 'audio-capture' || event.error === 'network') {
+        this.scheduleRestart(800);
+        return;
+      }
       this.onError(`识别错误: ${event.error}`);
     };
     this.recognition.onend = () => {
-      if (this.running) { try { this.recognition.start(); } catch { /* */ } }
+      // 快速自动重启 (300ms，比之前更快)
+      if (this.running) { this.scheduleRestart(300); }
     };
+    this.running = true;
     try { this.recognition.start(); } catch (e: any) { this.onError(e.message); }
+  }
+
+  private scheduleRestart(delayMs: number) {
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+      if (this.running) {
+        try { this.recognition.start(); } catch { /* already running */ }
+      }
+    }, delayMs);
   }
 
   stop() {
     this.running = false;
+    if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = null; }
     if (this.recognition) { try { this.recognition.stop(); } catch { /* */ } this.recognition = null; }
   }
 
@@ -425,7 +528,7 @@ class SpeechEngine {
 
 let translateTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingResolve: ((v: string) => void) | null = null;
-const DEBOUNCE_MS = 350;
+const DEBOUNCE_MS = 150;
 
 /**
  * 上下文增强的翻译：将最近 3 句翻译作为上下文传给后台。
@@ -511,14 +614,16 @@ class Controller {
   private setupSpeech() {
     this.speech.onInterim = async (text) => {
       if (!this.widget) return;
-      this.widget.setAudioLevel(0.3 + Math.random() * 0.7);
-      // 立即显示原文 interim
-      this.subtitleOverlay.showInterim(text, '...');
-      // 防抖翻译 interim
-      if (text.length > 2) {
+      // 立即显示原文 interim（不等翻译）
+      this.subtitleOverlay.showInterim(text, '⋯');
+      // 只要有文字就翻译（降低阈值）
+      if (text.trim().length > 0) {
         const zh = await translateDebounced(text, this.history);
-        // 只有当这还是最新的 interim 时才更新
         this.subtitleOverlay.showInterim(text, zh);
+      }
+      // 更新音频指示器（麦克风模式用模拟值，标签页模式用真实值）
+      if (!this.useTabAudio) {
+        this.widget.setAudioLevel(0.3 + Math.random() * 0.5);
       }
     };
 
@@ -532,7 +637,6 @@ class Controller {
       this.history.push(result);
       this.widget.addHistory(result);
       this.subtitleOverlay.showFinal(text, zh);
-      this.widget.setAudioLevel(0.15);
     };
 
     this.speech.onError = (err) => { console.warn('[LinguaSync]', err); };
@@ -542,8 +646,10 @@ class Controller {
   private startDetection() {
     const check = () => this.check();
     check();
-    for (let i = 1; i <= 5; i++) setTimeout(check, i * 1000);
-    setInterval(check, 3000);
+    // 前 5 秒高频检测 (每 500ms)
+    for (let i = 1; i <= 10; i++) setTimeout(check, i * 500);
+    // 之后每 2 秒检测一次
+    setInterval(check, 2000);
     new MutationObserver(check).observe(document.body, { childList: true, subtree: true });
   }
 
@@ -569,6 +675,10 @@ class Controller {
       video.addEventListener('play', this.videoPlayHandler);
       video.addEventListener('pause', this.videoPauseHandler);
       this.subtitleOverlay.attach(video);
+      // 如果视频已经在播放，立即启动同传
+      if (!video.paused && !video.ended && video.currentTime > 0) {
+        this.autoStartOnPlay();
+      }
     }
   }
 
@@ -602,12 +712,15 @@ class Controller {
       this.widget.setAudioLevel(0);
     } else {
       // 启动
-      // 如果使用标签页音频模式，先捕获音频
       if (this.useTabAudio && this.currentVideo) {
         this.widget.setAudioLevel(0.5);
         const ok = await this.tabAudio.start(this.currentVideo);
-        if (!ok) {
-          // 回退到麦克风模式
+        if (ok) {
+          // 接入真实音量监测
+          this.tabAudio.onLevel = (lv) => {
+            this.widget?.setAudioLevel(Math.max(0.1, lv));
+          };
+        } else {
           console.warn('[LinguaSync] 标签页音频捕获失败，使用麦克风模式');
         }
       }
