@@ -235,12 +235,13 @@
 /* ===== 标签页导航 ===== */
 
 .ls-fl-tabs {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 0;
   padding: 0 12px;
   background: rgba(15, 23, 42, 0.95);
   border-top: 1px solid rgba(51,65,85,0.2);
+  border-bottom: 1px solid rgba(51,65,85,0.15);
   position: relative;
 }
 
