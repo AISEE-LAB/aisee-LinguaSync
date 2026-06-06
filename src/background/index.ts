@@ -96,6 +96,43 @@ async function ensureOffscreenDocument() {
   }
 }
 
+// ---------- AI 待办提取 ----------
+
+async function extractTodos(text: string, apiKey: string): Promise<{ todos: string[] }> {
+  if (!apiKey) return { todos: [] };
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content:
+              '你是会议待办提取助手。从给定文本中提取可操作的待办事项（action items）。仅输出 JSON 数组，每项为一条待办。如果没有待办，输出空数组 []。不要添加任何额外说明。',
+          },
+          { role: 'user', content: text },
+        ],
+        temperature: 0.2,
+        max_tokens: 256,
+      }),
+    });
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content?.trim();
+    if (content) {
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed)) return { todos: parsed.filter((t: unknown) => typeof t === 'string') };
+    }
+  } catch {
+    // ignore
+  }
+  return { todos: [] };
+}
+
 // ---------- 消息路由 ----------
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -139,6 +176,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       ['defaultLanguage', 'translationBackend', 'openaiApiKey', 'autoStart', 'audioMode'],
       (config) => sendResponse(config)
     );
+    return true;
+  }
+
+  // AI 待办提取
+  if (message.type === 'EXTRACT_TODOS') {
+    extractTodos(message.text, message.apiKey)
+      .then(sendResponse)
+      .catch(() => sendResponse({ todos: [] }));
     return true;
   }
 

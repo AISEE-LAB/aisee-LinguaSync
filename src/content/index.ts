@@ -252,7 +252,13 @@ class SubtitleOverlay {
   }
 }
 
-// ========== 悬浮控制面板 ==========
+// ========== 悬浮控制面板 (v4 - 双标签页) ==========
+
+interface TodoItem {
+  text: string;
+  timestamp: number;
+  done: boolean;
+}
 
 class FloatingWidget {
   private root: HTMLElement;
@@ -261,8 +267,9 @@ class FloatingWidget {
   private dragging = false;
   private dragStart = { x: 0, y: 0 };
   private recording = false;
-  private expanded = false;
   private tabAudioActive = false;
+  private activeTab: 'record' | 'todo' = 'record';
+  private todos: TodoItem[] = [];
 
   onToggle: () => void = () => {};
   onExport: () => void = () => {};
@@ -285,11 +292,19 @@ class FloatingWidget {
       statusDot: q('.ls-fl-dot'), recBtn: q('.ls-fl-rec-btn'),
       recLabel: q('.ls-fl-rec-label'), statusLabel: q('.ls-fl-status'),
       audioBar: q('.ls-fl-audio-bar'),
-      historyBtn: q('.ls-fl-history-btn'), exportBtn: q('.ls-fl-export-btn'),
-      histCount: q('.ls-fl-count'), histPanel: q('.ls-fl-hist-panel'),
-      histList: q('.ls-fl-hist-list'), onboarding: q('.ls-fl-onboarding'),
-      onboardClose: q('.ls-fl-onboard-close'), tabAudioBtn: q('.ls-fl-tab-audio-btn'),
+      exportBtn: q('.ls-fl-export-btn'),
+      histCount: q('.ls-fl-count'),
+      tabRecord: q('.ls-fl-tab-record'), tabTodo: q('.ls-fl-tab-todo'),
+      tabIndicator: q('.ls-fl-tab-indicator'),
+      recordPanel: q('.ls-fl-record-panel'), todoPanel: q('.ls-fl-todo-panel'),
+      transcriptList: q('.ls-fl-transcript-list'),
+      todoList: q('.ls-fl-todo-list'), todoEmpty: q('.ls-fl-todo-empty'),
+      tabAudioBtn: q('.ls-fl-tab-audio-btn'),
       modeLabel: q('.ls-fl-mode-label'),
+      onboarding: q('.ls-fl-onboarding'),
+      onboardClose: q('.ls-fl-onboard-close'),
+      contentArea: q('.ls-fl-content-area'),
+      dropdownBtn: q('.ls-fl-dropdown-btn'),
     };
   }
 
@@ -314,22 +329,40 @@ class FloatingWidget {
           </button>
           <span class="ls-fl-status">就绪 · Alt+T</span>
           <span class="ls-fl-count" style="display:none">0</span>
+          <button class="ls-fl-dropdown-btn" title="更多选项">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
         </div>
         <div class="ls-fl-toolbar">
           <button class="ls-fl-tab-audio-btn" title="切换音频源">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
             <span class="ls-fl-mode-label">麦克风</span>
           </button>
-          <button class="ls-fl-history-btn" title="翻译历史">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            历史
-          </button>
           <button class="ls-fl-export-btn" title="导出 (Alt+E)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             导出
           </button>
         </div>
-        <div class="ls-fl-hist-panel" style="display:none"><div class="ls-fl-hist-list"></div></div>
+        <div class="ls-fl-tabs">
+          <div class="ls-fl-tab ls-fl-tab-record ls-fl-tab-active" data-tab="record">会议记录</div>
+          <div class="ls-fl-tab ls-fl-tab-todo" data-tab="todo">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            智能待办
+          </div>
+          <div class="ls-fl-tab-indicator"></div>
+        </div>
+        <div class="ls-fl-content-area">
+          <div class="ls-fl-record-panel">
+            <div class="ls-fl-transcript-list"></div>
+          </div>
+          <div class="ls-fl-todo-panel" style="display:none">
+            <div class="ls-fl-todo-list"></div>
+            <div class="ls-fl-todo-empty">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+              <span>AI 将在会议中自动为您分配任务</span>
+            </div>
+          </div>
+        </div>
         <div class="ls-fl-onboarding">
           <div class="ls-fl-onboard-title">LinguaSync Pro 已就绪</div>
           <div class="ls-fl-onboard-desc">
@@ -344,6 +377,7 @@ class FloatingWidget {
   }
 
   private setupEvents() {
+    // 拖拽
     this.els.dragBar.addEventListener('mousedown', (e: MouseEvent) => {
       if ((e.target as HTMLElement).closest('button')) return;
       this.dragging = true;
@@ -361,20 +395,38 @@ class FloatingWidget {
     });
     window.addEventListener('mouseup', () => { this.dragging = false; });
 
+    // 录音按钮
     this.els.recBtn.addEventListener('click', () => this.onToggle());
-    this.els.historyBtn.addEventListener('click', () => {
-      this.expanded = !this.expanded;
-      this.els.histPanel.style.display = this.expanded ? '' : 'none';
-    });
+    // 导出
     this.els.exportBtn.addEventListener('click', () => this.onExport());
+    // 新手引导关闭
     this.els.onboardClose.addEventListener('click', () => {
       this.els.onboarding.style.display = 'none';
       try { chrome.storage.local.set({ onboarded: true }); } catch { /* */ }
     });
+    // 标签页切换
+    this.els.tabRecord.addEventListener('click', () => this.switchTab('record'));
+    this.els.tabTodo.addEventListener('click', () => this.switchTab('todo'));
+  }
+
+  private switchTab(tab: 'record' | 'todo') {
+    this.activeTab = tab;
+    this.els.tabRecord.classList.toggle('ls-fl-tab-active', tab === 'record');
+    this.els.tabTodo.classList.toggle('ls-fl-tab-active', tab === 'todo');
+    this.els.recordPanel.style.display = tab === 'record' ? '' : 'none';
+    this.els.todoPanel.style.display = tab === 'todo' ? '' : 'none';
+    // 移动标签指示器
+    if (this.els.tabIndicator) {
+      const activeEl = tab === 'record' ? this.els.tabRecord : this.els.tabTodo;
+      this.els.tabIndicator.style.left = `${activeEl.offsetLeft}px`;
+      this.els.tabIndicator.style.width = `${activeEl.offsetWidth}px`;
+    }
+    // 切换到待办标签时清除新内容提示
+    if (tab === 'todo') this.clearTabNotification();
   }
 
   private centerAtBottom() {
-    this.pos = { x: Math.max(10, (window.innerWidth - 580) / 2), y: window.innerHeight - 140 };
+    this.pos = { x: Math.max(10, (window.innerWidth - 580) / 2), y: window.innerHeight - 200 };
     this.root.style.left = `${this.pos.x}px`;
     this.root.style.top = `${this.pos.y}px`;
   }
@@ -410,7 +462,6 @@ class FloatingWidget {
 
   isTabAudioMode() { return this.tabAudioActive; }
 
-  // tabAudioBtn 的点击回调需要外部设置
   getTabAudioBtn(): HTMLElement { return this.els.tabAudioBtn; }
 
   setAudioLevel(level: number) {
@@ -423,17 +474,49 @@ class FloatingWidget {
     });
   }
 
+  /** 添加一条会议记录（原文 + 译文） */
   addHistory(result: TranslationResult) {
     const item = document.createElement('div');
-    item.className = 'ls-fl-hist-item';
+    item.className = 'ls-fl-transcript-item';
     const t = new Date(result.timestamp);
     const ts = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
-    item.innerHTML = `<div class="ls-fl-hist-ts">${ts}</div><div class="ls-fl-hist-orig">${esc(result.original)}</div><div class="ls-fl-hist-zh">${esc(result.translated)}</div>`;
-    this.els.histList.appendChild(item);
-    this.els.histList.scrollTop = this.els.histList.scrollHeight;
-    const count = this.els.histList.children.length;
+    item.innerHTML = `<div class="ls-fl-ts-ts">${ts}</div><div class="ls-fl-ts-orig">${esc(result.original)}</div><div class="ls-fl-ts-zh">${esc(result.translated)}</div>`;
+    this.els.transcriptList.appendChild(item);
+    this.els.transcriptList.scrollTop = this.els.transcriptList.scrollHeight;
+    const count = this.els.transcriptList.children.length;
     this.els.histCount.textContent = String(count);
     this.els.histCount.style.display = count > 0 ? '' : 'none';
+  }
+
+  /** 添加一条智能待办 */
+  addTodo(todo: TodoItem) {
+    this.todos.push(todo);
+    this.els.todoEmpty.style.display = 'none';
+    const item = document.createElement('div');
+    item.className = 'ls-fl-todo-item';
+    const checkbox = document.createElement('span');
+    checkbox.className = 'ls-fl-todo-check';
+    checkbox.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>`;
+    checkbox.addEventListener('click', () => {
+      todo.done = !todo.done;
+      item.classList.toggle('ls-fl-todo-done', todo.done);
+    });
+    const text = document.createElement('span');
+    text.className = 'ls-fl-todo-text';
+    text.textContent = todo.text;
+    item.appendChild(checkbox);
+    item.appendChild(text);
+    this.els.todoList.appendChild(item);
+    this.els.todoList.scrollTop = this.els.todoList.scrollHeight;
+    // 如果待办标签页有新内容，添加提示
+    if (this.activeTab !== 'todo') {
+      this.els.tabTodo.classList.add('ls-fl-tab-new');
+    }
+  }
+
+  /** 切换标签页时清除新内容提示 */
+  clearTabNotification() {
+    this.els.tabTodo.classList.remove('ls-fl-tab-new');
   }
 }
 
@@ -637,6 +720,8 @@ class Controller {
       this.history.push(result);
       this.widget.addHistory(result);
       this.subtitleOverlay.showFinal(text, zh);
+      // 尝试从译文提取智能待办
+      this.extractTodos(zh);
     };
 
     this.speech.onError = (err) => { console.warn('[LinguaSync]', err); };
@@ -774,6 +859,46 @@ class Controller {
     a.download = `linguasync_${new Date().toISOString().slice(0,10)}.txt`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  // --- 智能待办提取 ---
+  private extractTodos(translatedText: string) {
+    if (!this.widget) return;
+    // 关键词匹配模式：识别包含行动指令的句子
+    const todoPatterns = [
+      /(?:需要|必须|应该|务必|请|记得|别忘了|要)(.{4,40})/,
+      /(?:负责|跟进|处理|完成|准备|提交|修改|更新|检查|确认|安排|通知|联系|回复|审核)(.{4,40})/,
+      /(?:下一步|接下来|之后)(.{4,40})/,
+      /(?:deadline|截止|限期).{0,5}(.{4,40})/i,
+      /(?:action\s*item|todo|task).{0,5}(.{4,40})/i,
+    ];
+
+    for (const pattern of todoPatterns) {
+      const match = translatedText.match(pattern);
+      if (match) {
+        const todoText = match[0].trim();
+        if (todoText.length > 4) {
+          this.widget.addTodo({ text: todoText, timestamp: Date.now(), done: false });
+          return; // 每条译文最多提取一条待办
+        }
+      }
+    }
+
+    // 尝试通过后台 AI 提取（如果有 OpenAI key）
+    if (this.config.openaiApiKey) {
+      try {
+        chrome.runtime.sendMessage(
+          { type: 'EXTRACT_TODOS', text: translatedText, apiKey: this.config.openaiApiKey },
+          (response) => {
+            if (!chrome.runtime.lastError && response?.todos?.length > 0) {
+              for (const t of response.todos as string[]) {
+                this.widget?.addTodo({ text: t, timestamp: Date.now(), done: false });
+              }
+            }
+          }
+        );
+      } catch { /* */ }
+    }
   }
 }
 
