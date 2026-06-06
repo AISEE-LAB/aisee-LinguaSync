@@ -365,7 +365,7 @@ class FloatingWidget {
             </div>
           </div>
         </div>
-        <div class="ls-fl-onboarding">
+        <div class="ls-fl-onboarding" style="display:none">
           <div class="ls-fl-onboard-title">LinguaSync Pro 已就绪</div>
           <div class="ls-fl-onboard-desc">
             播放视频后自动开始同传，翻译字幕直接叠加在视频上。<br/>
@@ -438,7 +438,7 @@ class FloatingWidget {
   }
 
   private centerAtBottom() {
-    this.pos = { x: Math.max(10, (window.innerWidth - 580) / 2), y: window.innerHeight - 200 };
+    this.pos = { x: Math.max(10, (window.innerWidth - 580) / 2), y: window.innerHeight - 130 };
     this.root.style.left = `${this.pos.x}px`;
     this.root.style.top = `${this.pos.y}px`;
   }
@@ -446,10 +446,10 @@ class FloatingWidget {
   private showOnboarding() {
     try {
       chrome.storage.local.get(['onboarded'], (res: Record<string, any>) => {
-        if (res.onboarded) this.els.onboarding.style.display = 'none';
+        if (!res.onboarded) this.els.onboarding.style.display = '';
       });
     } catch {
-      this.els.onboarding.style.display = 'none';
+      // ignore
     }
   }
 
