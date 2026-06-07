@@ -6,6 +6,10 @@ Chrome 扩展，在任何视频网页上浮现 AI 同声传译悬浮窗。播放
 >
 > - [GitHub Release 下载](https://github.com/qq1906198507-ai/AIst/releases/download/v7.0.0/LinguaSync-Pro-v7-demo.mp4)
 > - [百度网盘](https://pan.baidu.com/s/1LW3uPIpZml6NUkz-fMFdbA) 提取码: `2amw`
+>
+> **▶ 补充演示 (v7.1)** — 会话统计面板 · 回放锚点跳转 · 自定义术语表
+>
+> - [百度网盘](https://pan.baidu.com/s/18JeMat4BNug3nTuDEywebg) 提取码: `7rbz`
 
 ## 功能一览
 
