@@ -991,3 +991,227 @@
   margin-top: 2px;
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
 }
+
+/* ========== 回放锚点 ========== */
+
+.ls-fl-anchor-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  color: #58A6FF;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+.ls-fl-transcript-item:hover .ls-fl-anchor-icon { opacity: 1; }
+.ls-fl-transcript-item { cursor: pointer; transition: background 0.2s; }
+.ls-fl-transcript-item:hover { background: rgba(88, 166, 255, 0.05); }
+.ls-fl-anchor-flash {
+  animation: anchorPulse 1.5s ease-out;
+}
+@keyframes anchorPulse {
+  0% { background: rgba(88, 166, 255, 0.25); }
+  100% { background: transparent; }
+}
+
+/* ========== 统计面板 ========== */
+
+.ls-fl-stats-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+.ls-fl-stats-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+.ls-fl-stats-refresh {
+  background: transparent;
+  border: 1px solid #30363D;
+  color: #8B949E;
+  font-size: 10px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s;
+}
+.ls-fl-stats-refresh:hover { border-color: #58A6FF; color: #58A6FF; }
+.ls-stats-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  color: #484F58;
+  font-size: 11px;
+  gap: 8px;
+}
+.ls-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.ls-stats-card {
+  background: #161B22;
+  border: 1px solid #21262D;
+  border-radius: 6px;
+  padding: 8px 6px;
+  text-align: center;
+}
+.ls-stats-val {
+  font-size: 18px;
+  font-weight: 700;
+  color: #58A6FF;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  line-height: 1.2;
+}
+.ls-stats-label {
+  font-size: 9px;
+  color: #6E7681;
+  margin-top: 2px;
+}
+.ls-stats-section {
+  margin-top: 8px;
+}
+.ls-stats-section-title {
+  font-size: 10px;
+  color: #8B949E;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.ls-stats-chart {
+  width: 100%;
+  background: #161B22;
+  border: 1px solid #21262D;
+  border-radius: 6px;
+}
+.ls-stats-terms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.ls-stats-term {
+  display: inline-flex;
+  align-items: baseline;
+  background: #161B22;
+  border: 1px solid #21262D;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: #C9D1D9;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+.ls-stats-term sup {
+  color: #F0883E;
+  font-size: 9px;
+  margin-left: 2px;
+}
+
+/* ========== 自定义术语表面板 ========== */
+
+.ls-fl-glossary-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ls-fl-glossary-toolbar {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.ls-fl-glossary-toolbar input {
+  flex: 1;
+  background: #0D1117;
+  border: 1px solid #30363D;
+  color: #C9D1D9;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  padding: 4px 6px;
+  border-radius: 4px;
+  outline: none;
+  min-width: 0;
+}
+.ls-fl-glossary-toolbar input:focus { border-color: #58A6FF; }
+.ls-fl-glossary-toolbar input::placeholder { color: #484F58; }
+.ls-fl-glossary-add {
+  background: #238636;
+  border: none;
+  color: #FFFFFF;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+.ls-fl-glossary-add:hover { background: #2EA043; }
+.ls-fl-glossary-list {
+  flex: 1;
+  overflow-y: auto;
+}
+.ls-fl-glossary-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  color: #484F58;
+  font-size: 11px;
+  gap: 8px;
+}
+.ls-glossary-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-bottom: 1px solid #21262D;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+.ls-glossary-term-tag {
+  color: #D2A8FF;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ls-glossary-arrow {
+  color: #484F58;
+  font-size: 10px;
+}
+.ls-glossary-trans {
+  color: #7EE787;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ls-glossary-del {
+  background: transparent;
+  border: none;
+  color: #F85149;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+  flex-shrink: 0;
+}
+.ls-glossary-del:hover { opacity: 1; }
+
+/* ========== 六标签页紧凑样式 ========== */
+
+.ls-fl-tabs .ls-fl-tab {
+  font-size: 10px;
+  padding: 4px 6px;
+}
