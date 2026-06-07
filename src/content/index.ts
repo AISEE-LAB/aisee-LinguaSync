@@ -22,6 +22,8 @@ interface AppConfig {
   openaiApiKey: string;
   autoStart: boolean;
   audioMode: 'microphone' | 'tabAudio';
+  ttsEnabled: boolean;
+  subtitleEnabled: boolean;
 }
 
 // ========== 视频检测 ==========
@@ -253,6 +255,77 @@ class SubtitleOverlay {
   }
 }
 
+// ========== TTS 语音朗读引擎 ==========
+
+class TTSEngine {
+  private synth = window.speechSynthesis;
+  private queue: string[] = [];
+  private speaking = false;
+  private enabled = false;
+  private voice: SpeechSynthesisVoice | null = null;
+  private rate = 1.0;
+
+  /** 初始化：等待语音列表加载并选择中文语音 */
+  init() {
+    const pickVoice = () => {
+      const voices = this.synth.getVoices();
+      // 优先选 zh-CN，其次 zh-TW/zh-HK，再次任意中文
+      this.voice =
+        voices.find((v) => v.lang === 'zh-CN') ||
+        voices.find((v) => v.lang.startsWith('zh')) ||
+        null;
+    };
+    pickVoice();
+    if (typeof this.synth.onvoiceschanged !== 'undefined') {
+      this.synth.onvoiceschanged = pickVoice;
+    }
+  }
+
+  setEnabled(on: boolean) {
+    this.enabled = on;
+    if (!on) this.stop();
+  }
+
+  isEnabled(): boolean { return this.enabled; }
+
+  setRate(rate: number) { this.rate = Math.max(0.5, Math.min(2, rate)); }
+
+  /** 朗读一段中文翻译 */
+  speak(text: string) {
+    if (!this.enabled || !text || text.trim().length === 0) return;
+    this.queue.push(text);
+    this.processQueue();
+  }
+
+  private processQueue() {
+    if (this.speaking || this.queue.length === 0) return;
+    this.speaking = true;
+    const text = this.queue.shift()!;
+    const utterance = new SpeechSynthesisUtterance(text);
+    if (this.voice) utterance.voice = this.voice;
+    utterance.lang = 'zh-CN';
+    utterance.rate = this.rate;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+    utterance.onend = () => {
+      this.speaking = false;
+      this.processQueue();
+    };
+    utterance.onerror = () => {
+      this.speaking = false;
+      this.processQueue();
+    };
+    this.synth.speak(utterance);
+  }
+
+  /** 停止朗读并清空队列 */
+  stop() {
+    this.queue = [];
+    this.speaking = false;
+    if (this.synth.speaking) this.synth.cancel();
+  }
+}
+
 // ========== 悬浮控制面板 (v4 - 双标签页) ==========
 
 interface TodoItem {
@@ -275,6 +348,8 @@ class FloatingWidget {
 
   onToggle: () => void = () => {};
   onExport: () => void = () => {};
+  onTtsToggle: () => void = () => {};
+  onSubtitleToggle: () => void = () => {};
 
   constructor() {
     this.root = document.createElement('div');
@@ -302,6 +377,10 @@ class FloatingWidget {
       transcriptList: q('.ls-fl-transcript-list'),
       todoList: q('.ls-fl-todo-list'), todoEmpty: q('.ls-fl-todo-empty'),
       tabAudioBtn: q('.ls-fl-tab-audio-btn'),
+      ttsBtn: q('.ls-fl-tts-btn'),
+      subBtn: q('.ls-fl-sub-btn'),
+      ttsLabel: q('.ls-fl-tts-label'),
+      subLabel: q('.ls-fl-sub-label'),
       modeLabel: q('.ls-fl-mode-label'),
       onboarding: q('.ls-fl-onboarding'),
       onboardClose: q('.ls-fl-onboard-close'),
@@ -321,7 +400,7 @@ class FloatingWidget {
             <span class="ls-fl-dot"></span>
             <span>LINGUASYNC</span>
             <span class="ls-fl-pro">PRO</span>
-            <span style="font-size:9px;color:#475569;margin-left:4px">v4.0</span>
+            <span style="font-size:9px;color:#475569;margin-left:4px">v4.1</span>
           </div>
           <div class="ls-fl-audio-bar">${Array.from({length:12}, (_,i) => `<span class="ls-fl-bar-seg" style="--i:${i}"></span>`).join('')}</div>
         </div>
@@ -342,6 +421,14 @@ class FloatingWidget {
           <button class="ls-fl-tab-audio-btn" title="切换音频源">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
             <span class="ls-fl-mode-label">麦克风</span>
+          </button>
+          <button class="ls-fl-tts-btn" title="语音朗读">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+            <span class="ls-fl-tts-label">语音</span>
+          </button>
+          <button class="ls-fl-sub-btn" title="字幕叠加">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="16" x2="18" y2="16"/><line x1="6" y1="12" x2="14" y2="12"/></svg>
+            <span class="ls-fl-sub-label">字幕</span>
           </button>
           <button class="ls-fl-export-btn" title="导出 (Alt+E)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -404,6 +491,10 @@ class FloatingWidget {
     this.els.recBtn.addEventListener('click', () => this.onToggle());
     // 导出
     this.els.exportBtn.addEventListener('click', () => this.onExport());
+    // TTS 语音开关
+    this.els.ttsBtn.addEventListener('click', () => this.onTtsToggle());
+    // 字幕叠加开关
+    this.els.subBtn.addEventListener('click', () => this.onSubtitleToggle());
     // 新手引导关闭
     this.els.onboardClose.addEventListener('click', () => {
       this.els.onboarding.style.display = 'none';
@@ -477,6 +568,16 @@ class FloatingWidget {
   }
 
   isTabAudioMode() { return this.tabAudioActive; }
+
+  setTtsEnabled(on: boolean) {
+    this.els.ttsBtn.classList.toggle('ls-fl-tab-active', on);
+    if (this.els.ttsLabel) this.els.ttsLabel.textContent = on ? '语音开' : '语音';
+  }
+
+  setSubtitleEnabled(on: boolean) {
+    this.els.subBtn.classList.toggle('ls-fl-tab-active', on);
+    if (this.els.subLabel) this.els.subLabel.textContent = on ? '字幕开' : '字幕';
+  }
 
   getTabAudioBtn(): HTMLElement { return this.els.tabAudioBtn; }
 
@@ -769,19 +870,23 @@ class Controller {
   private speech = new SpeechEngine('en-US');
   private tabAudio = new TabAudioCapture();
   private correction = new SelfCorrectionEngine();
+  private tts = new TTSEngine();
   private history: TranslationResult[] = [];
   private currentVideo: HTMLVideoElement | null = null;
   private useTabAudio = false;
+  private subtitleEnabled = true;
   private videoPlayHandler = () => this.autoStartOnPlay();
   private videoPauseHandler = () => this.autoPauseOnStop();
   private config: AppConfig = {
     defaultLanguage: 'en-US', translationBackend: 'mymemory',
     openaiApiKey: '', autoStart: false, audioMode: 'microphone',
+    ttsEnabled: false, subtitleEnabled: true,
   };
 
   constructor() {
     this.loadConfig();
     this.setupSpeech();
+    this.tts.init();
     this.startDetection();
     this.setupKeyboard();
   }
@@ -793,6 +898,8 @@ class Controller {
           this.config = { ...this.config, ...cfg } as AppConfig;
           this.speech.setLang(this.config.defaultLanguage || 'en-US');
           if (this.config.audioMode === 'tabAudio') this.useTabAudio = true;
+          if (this.config.ttsEnabled) this.tts.setEnabled(true);
+          if (this.config.subtitleEnabled === false) this.subtitleEnabled = false;
         }
       });
     } catch { /* */ }
@@ -804,11 +911,11 @@ class Controller {
       if (!this.widget) return;
       this.correction.recordInterim(text);
       // 立即显示原文 interim（不等翻译）
-      this.subtitleOverlay.showInterim(text, '⋯');
+      if (this.subtitleEnabled) this.subtitleOverlay.showInterim(text, '⋯');
       // 只要有文字就翻译（降低阈值）
       if (text.trim().length > 0) {
         const zh = await translateDebounced(text, this.history);
-        this.subtitleOverlay.showInterim(text, zh);
+        if (this.subtitleEnabled) this.subtitleOverlay.showInterim(text, zh);
       }
       // 更新音频指示器（麦克风模式用模拟值，标签页模式用真实值）
       if (!this.useTabAudio) {
@@ -827,7 +934,10 @@ class Controller {
       const result: TranslationResult = { original: text, translated: zh, timestamp: Date.now(), corrected: 0 };
       this.history.push(result);
       this.widget.addHistory(result);
-      this.subtitleOverlay.showFinal(text, zh);
+      // 字幕叠加显示
+      if (this.subtitleEnabled) this.subtitleOverlay.showFinal(text, zh);
+      // TTS 语音朗读翻译结果
+      this.tts.speak(zh);
       // 尝试从译文提取智能待办
       this.extractTodos(zh);
       // 触发历史自纠正
@@ -855,9 +965,13 @@ class Controller {
       this.widget.show();
       this.widget.onToggle = () => this.toggle();
       this.widget.onExport = () => this.exportHistory();
+      this.widget.onTtsToggle = () => this.toggleTts();
+      this.widget.onSubtitleToggle = () => this.toggleSubtitle();
       // 音频模式切换按钮
       this.widget.getTabAudioBtn().addEventListener('click', () => this.toggleAudioMode());
       this.widget.setTabAudioMode(this.useTabAudio);
+      this.widget.setTtsEnabled(this.tts.isEnabled());
+      this.widget.setSubtitleEnabled(this.subtitleEnabled);
       this.subtitleOverlay.attach(video);
     }
     // 更新视频目标 + 绑定播放事件
@@ -902,6 +1016,7 @@ class Controller {
       // 停止
       this.speech.stop();
       this.tabAudio.stop();
+      this.tts.stop();
       this.widget.setRecording(false);
       this.subtitleOverlay.hide();
       this.widget.setAudioLevel(0);
@@ -936,6 +1051,22 @@ class Controller {
     }
     // 保存偏好
     try { chrome.storage.local.set({ audioMode: this.useTabAudio ? 'tabAudio' : 'microphone' }); } catch { /* */ }
+  }
+
+  // --- 切换 TTS 语音朗读 ---
+  private toggleTts() {
+    const newState = !this.tts.isEnabled();
+    this.tts.setEnabled(newState);
+    this.widget?.setTtsEnabled(newState);
+    try { chrome.storage.local.set({ ttsEnabled: newState }); } catch { /* */ }
+  }
+
+  // --- 切换字幕叠加 ---
+  private toggleSubtitle() {
+    this.subtitleEnabled = !this.subtitleEnabled;
+    this.widget?.setSubtitleEnabled(this.subtitleEnabled);
+    if (!this.subtitleEnabled) this.subtitleOverlay.hide();
+    try { chrome.storage.local.set({ subtitleEnabled: this.subtitleEnabled }); } catch { /* */ }
   }
 
   // --- 快捷键 ---

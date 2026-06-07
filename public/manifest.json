@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "LinguaSync Pro - AI 视频同传",
-  "version": "4.0.1",
-  "description": "在任何视频网页上浮现 AI 同声传译悬浮窗，支持标签页音频直采、视频内嵌字幕、快捷键操控",
+  "version": "4.1.0",
+  "description": "在任何视频网页上浮现 AI 同声传译悬浮窗，支持标签页音频直采、视频字幕叠加、TTS 语音朗读、快捷键操控",
   "permissions": ["activeTab", "storage", "scripting", "tabCapture", "offscreen"],
   "host_permissions": ["<all_urls>"],
   "action": {

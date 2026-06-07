@@ -142,6 +142,8 @@ chrome.runtime.onInstalled.addListener(() => {
     openaiApiKey: '',
     autoStart: false,
     audioMode: 'microphone', // 'microphone' | 'tabAudio'
+    ttsEnabled: false,
+    subtitleEnabled: true,
   });
 });
 
@@ -173,7 +175,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // 获取配置
   if (message.type === 'GET_CONFIG') {
     chrome.storage.local.get(
-      ['defaultLanguage', 'translationBackend', 'openaiApiKey', 'autoStart', 'audioMode'],
+      ['defaultLanguage', 'translationBackend', 'openaiApiKey', 'autoStart', 'audioMode', 'ttsEnabled', 'subtitleEnabled'],
       (config) => sendResponse(config)
     );
     return true;

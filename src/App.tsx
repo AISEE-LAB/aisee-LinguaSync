@@ -14,17 +14,21 @@ const LANGUAGES = [
 export default function Popup() {
   const [language, setLanguage] = useState('en-US');
   const [autoStart, setAutoStart] = useState(false);
+  const [ttsEnabled, setTtsEnabled] = useState(false);
+  const [subtitleEnabled, setSubtitleEnabled] = useState(true);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    chrome.storage.local.get(['defaultLanguage', 'autoStart'], (result: Record<string, any>) => {
+    chrome.storage.local.get(['defaultLanguage', 'autoStart', 'ttsEnabled', 'subtitleEnabled'], (result: Record<string, any>) => {
       if (result.defaultLanguage) setLanguage(result.defaultLanguage as string);
       if (result.autoStart !== undefined) setAutoStart(result.autoStart as boolean);
+      if (result.ttsEnabled !== undefined) setTtsEnabled(result.ttsEnabled as boolean);
+      if (result.subtitleEnabled !== undefined) setSubtitleEnabled(result.subtitleEnabled as boolean);
     });
   }, []);
 
   const handleSave = () => {
-    chrome.storage.local.set({ defaultLanguage: language, autoStart }, () => {
+    chrome.storage.local.set({ defaultLanguage: language, autoStart, ttsEnabled, subtitleEnabled }, () => {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     });
@@ -79,6 +83,40 @@ export default function Popup() {
             <div
               className={`w-3.5 h-3.5 rounded-full bg-white absolute top-[3px] transition-all ${
                 autoStart ? 'left-[18px]' : 'left-[3px]'
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* 语音朗读 */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-slate-300">语音朗读翻译</span>
+          <button
+            onClick={() => setTtsEnabled(!ttsEnabled)}
+            className={`w-9 h-5 rounded-full transition-colors relative ${
+              ttsEnabled ? 'bg-emerald-600' : 'bg-slate-700'
+            }`}
+          >
+            <div
+              className={`w-3.5 h-3.5 rounded-full bg-white absolute top-[3px] transition-all ${
+                ttsEnabled ? 'left-[18px]' : 'left-[3px]'
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* 字幕叠加 */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-slate-300">视频字幕叠加</span>
+          <button
+            onClick={() => setSubtitleEnabled(!subtitleEnabled)}
+            className={`w-9 h-5 rounded-full transition-colors relative ${
+              subtitleEnabled ? 'bg-amber-600' : 'bg-slate-700'
+            }`}
+          >
+            <div
+              className={`w-3.5 h-3.5 rounded-full bg-white absolute top-[3px] transition-all ${
+                subtitleEnabled ? 'left-[18px]' : 'left-[3px]'
               }`}
             />
           </button>
