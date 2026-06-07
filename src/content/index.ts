@@ -1,5 +1,5 @@
 /**
- * LinguaSync Pro v6 - 内容脚本
+ * LinguaSync Pro v7 - 内容脚本
  *
  * 新增:
  *  - GitHub Dark 极客终端风 UI — JetBrains Mono 等宽体 + #0D1117 暗黑背景
@@ -9,6 +9,8 @@
  *  - 自纠正引擎 — Levenshtein 距离自动修正
  *  - 知识胶囊 (Live Tooltips) — 专业术语悬浮解释，Wikipedia + 本地词典
  *  - 实时思维导图 (Auto-Structuring) — 根据讲者逻辑生成结构化大纲
+ *  - 开小差补救 (Catch-up Mode) — Ctrl+Enter 一键总结过去 5 分钟要点
+ *  - 流式问答伴侣 (Live Q&A) — 命令行输入框，基于转录缓存即时回答
  */
 
 // ========== 类型 ==========
@@ -761,6 +763,162 @@ class MindMapBuilder {
   }
 }
 
+// ========== 开小差补救引擎 (Catch-up Mode) ==========
+
+interface CatchUpPoint {
+  text: string;
+  translated: string;
+  timestamp: number;
+  score: number;
+}
+
+class CatchUpEngine {
+  private extractor: TermExtractor;
+  /** 主题指示关键词（中/英） */
+  private topicWords = new Set([
+    '重要', '关键', '核心', '总结', '结论', '发现', '结果', '问题', '解决',
+    'important', 'key', 'critical', 'conclusion', 'result', 'problem', 'solution',
+    'first', 'second', 'finally', 'next', 'new', 'different', 'actually',
+  ]);
+
+  constructor(extractor: TermExtractor) {
+    this.extractor = extractor;
+  }
+
+  /**
+   * 从最近 N 分钟的历史中提取 Top K 要点。
+   * 算法：术语密度 + 主题关键词 + 句子长度适中 + 时间分散
+   */
+  summarize(history: TranslationResult[], minutesBack = 5, topK = 3): CatchUpPoint[] {
+    const cutoff = Date.now() - minutesBack * 60 * 1000;
+    const recent = history.filter(h => h.timestamp >= cutoff);
+    if (recent.length === 0) return [];
+    if (recent.length <= topK) {
+      return recent.map(h => ({
+        text: h.original, translated: h.translated,
+        timestamp: h.timestamp, score: 1,
+      }));
+    }
+
+    // 计算每句的重要性分数
+    const scored = recent.map((entry) => {
+      let score = 0;
+      // 1) 术语密度：包含的专业术语越多越重要
+      const terms = this.extractor.extract(entry.original);
+      score += terms.length * 3;
+      // 2) 主题关键词命中
+      const words = entry.original.toLowerCase().split(/\s+/);
+      for (const w of words) {
+        if (this.topicWords.has(w.replace(/[.,;:!?]/g, ''))) score += 2;
+      }
+      for (const tw of this.topicWords) {
+        if (entry.translated.includes(tw)) score += 2;
+      }
+      // 3) 句子长度适中（15~80 词最佳，太短或太长扣分）
+      const wordCount = words.length;
+      if (wordCount >= 8 && wordCount <= 50) score += 2;
+      else if (wordCount < 5) score -= 2;
+      // 4) 独特性：与其他句子不太重复
+      let overlapPenalty = 0;
+      for (const other of recent) {
+        if (other === entry) continue;
+        const sim = similarity(entry.original.slice(0, 50), other.original.slice(0, 50));
+        if (sim > 0.6) overlapPenalty += 1;
+      }
+      score -= overlapPenalty;
+      return { text: entry.original, translated: entry.translated, timestamp: entry.timestamp, score };
+    });
+
+    // 按分数排序，取 Top K，尽量时间分散
+    scored.sort((a, b) => b.score - a.score);
+    const selected: CatchUpPoint[] = [];
+    const minGap = (minutesBack * 60 * 1000) / (topK + 1); // 最小时间间隔
+    for (const item of scored) {
+      if (selected.length >= topK) break;
+      const tooClose = selected.some(s => Math.abs(s.timestamp - item.timestamp) < minGap);
+      if (!tooClose || selected.length < 2) {
+        selected.push(item);
+      }
+    }
+    // 按时间排序返回
+    selected.sort((a, b) => a.timestamp - b.timestamp);
+    return selected;
+  }
+}
+
+// ========== 流式问答引擎 (Live Q&A Co-pilot) ==========
+
+interface QAResult {
+  question: string;
+  answers: { text: string; translated: string; timestamp: number; relevance: number }[];
+  timestamp: number;
+}
+
+class QAEngine {
+  /** 中文停用词 */
+  private stopWords = new Set([
+    '的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一',
+    '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会', '着',
+    '没有', '看', '好', '自己', '这', '他', '她', '它', '吗', '什么', '那',
+    '怎么', '为什么', '哪', '谁', '多少', '几', 'the', 'a', 'an', 'is',
+    'are', 'was', 'were', 'do', 'does', 'did', 'what', 'which', 'who',
+    'when', 'where', 'why', 'how', 'can', 'could', 'would', 'should',
+    'just', 'about', 'does', 'has', 'have', 'had',
+  ]);
+
+  /**
+   * 在转录历史中搜索与问题相关的片段。
+   * 算法：提取问题关键词 → 计算每段历史与关键词的重叠度 → 按相关性排序
+   */
+  search(question: string, history: TranslationResult[], topK = 3): QAResult {
+    const keywords = this.extractKeywords(question);
+    const scored = history.map((entry) => {
+      let relevance = 0;
+      const combined = `${entry.original} ${entry.translated}`.toLowerCase();
+      for (const kw of keywords) {
+        const kwLower = kw.toLowerCase();
+        // 精确匹配权重高
+        if (combined.includes(kwLower)) relevance += 3;
+        // 部分匹配（前缀）
+        const words = combined.split(/\s+/);
+        for (const w of words) {
+          if (w.startsWith(kwLower) && w.length > kwLower.length) relevance += 1;
+        }
+      }
+      // 时间衰减：越近的内容越相关
+      const ageMinutes = (Date.now() - entry.timestamp) / 60000;
+      relevance *= Math.max(0.3, 1 - ageMinutes / 30);
+      return { text: entry.original, translated: entry.translated, timestamp: entry.timestamp, relevance };
+    });
+    scored.sort((a, b) => b.relevance - a.relevance);
+    const answers = scored.filter(s => s.relevance > 0).slice(0, topK);
+    return { question, answers, timestamp: Date.now() };
+  }
+
+  /** 从问题中提取关键词（去停用词 + 分词） */
+  private extractKeywords(text: string): string[] {
+    // 中文：按标点/空格分割，取 2 字以上的片段
+    // 英文：按空格分割，去停用词
+    const parts = text.split(/[\s,，。？?！!、；;：:]+/);
+    const keywords: string[] = [];
+    for (const part of parts) {
+      const clean = part.replace(/[.,;:!?'"()\[\]]/g, '').trim();
+      if (clean.length < 2) continue;
+      if (this.stopWords.has(clean) || this.stopWords.has(clean.toLowerCase())) continue;
+      keywords.push(clean);
+      // 对中文长词进行 bigram 拆分增加召回率
+      if (/[\u4e00-\u9fff]/.test(clean) && clean.length > 3) {
+        for (let i = 0; i < clean.length - 1; i++) {
+          const bigram = clean.slice(i, i + 2);
+          if (!this.stopWords.has(bigram)) keywords.push(bigram);
+        }
+      }
+    }
+    // 去重
+    return [...new Set(keywords)];
+  }
+}
+
 // ========== 悬浮控制面板 (v4 - 双标签页) ==========
 
 interface TodoItem {
@@ -777,7 +935,7 @@ class FloatingWidget {
   private dragStart = { x: 0, y: 0 };
   private recording = false;
   private tabAudioActive = false;
-  private activeTab: 'record' | 'todo' | 'mindmap' = 'record';
+  private activeTab: 'record' | 'todo' | 'mindmap' | 'qa' = 'record';
   private panelExpanded = false;
   private todos: TodoItem[] = [];
 
@@ -790,6 +948,7 @@ class FloatingWidget {
   onTermLeave: () => void = () => {};
   onMindmapExportMd: () => void = () => {};
   onMindmapExportJson: () => void = () => {};
+  onQuestion: (question: string) => void = () => {};
 
   constructor() {
     this.root = document.createElement('div');
@@ -813,6 +972,7 @@ class FloatingWidget {
       histCount: q('.ls-fl-count'),
       tabRecord: q('.ls-fl-tab-record'), tabTodo: q('.ls-fl-tab-todo'),
       tabMindmap: q('.ls-fl-tab-mindmap'),
+      tabQa: q('.ls-fl-tab-qa'),
       tabIndicator: q('.ls-fl-tab-indicator'),
       recordPanel: q('.ls-fl-record-panel'), todoPanel: q('.ls-fl-todo-panel'),
       transcriptList: q('.ls-fl-transcript-list'),
@@ -822,6 +982,10 @@ class FloatingWidget {
       mindmapExportMd: q('.ls-fl-mm-export-md'),
       mindmapExportJson: q('.ls-fl-mm-export-json'),
       mindmapEmpty: q('.ls-fl-mindmap-empty'),
+      qaPanel: q('.ls-fl-qa-panel'),
+      qaInput: q('.ls-fl-qa-input'),
+      qaHistory: q('.ls-fl-qa-history'),
+      qaEmpty: q('.ls-fl-qa-empty'),
       tabAudioBtn: q('.ls-fl-tab-audio-btn'),
       ttsBtn: q('.ls-fl-tts-btn'),
       subBtn: q('.ls-fl-sub-btn'),
@@ -849,7 +1013,7 @@ class FloatingWidget {
             <span class="ls-fl-dot"></span>
             <span>LINGUASYNC</span>
             <span class="ls-fl-pro">PRO</span>
-            <span style="font-size:9px;color:#484F58;margin-left:4px">v6.0</span>
+            <span style="font-size:9px;color:#484F58;margin-left:4px">v7.0</span>
           </div>
           <div class="ls-fl-audio-bar">${Array.from({length:12}, (_,i) => `<span class="ls-fl-bar-seg" style="--i:${i}"></span>`).join('')}</div>
         </div>
@@ -898,6 +1062,10 @@ class FloatingWidget {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 3v6"/><path d="M12 15v6"/><path d="M3 12h6"/><path d="M15 12h6"/><path d="M5.6 5.6l4.2 4.2"/><path d="M14.2 14.2l4.2 4.2"/></svg>
             思维导图
           </div>
+          <div class="ls-fl-tab ls-fl-tab-qa" data-tab="qa">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            问答
+          </div>
           <div class="ls-fl-tab-indicator"></div>
         </div>
         <div class="ls-fl-content-area" style="display:none">
@@ -927,6 +1095,17 @@ class FloatingWidget {
             <div class="ls-fl-mindmap-empty">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 3v6"/><path d="M12 15v6"/><path d="M3 12h6"/><path d="M15 12h6"/></svg>
               <span>开始同传后，AI 将实时生成结构化大纲</span>
+            </div>
+          </div>
+          <div class="ls-fl-qa-panel" style="display:none">
+            <div class="ls-fl-qa-history"></div>
+            <div class="ls-fl-qa-empty">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span>同传进行中，随时输入问题查询相关片段</span>
+            </div>
+            <div class="ls-fl-qa-input-bar">
+              <span class="ls-fl-qa-prompt">$</span>
+              <input class="ls-fl-qa-input" type="text" placeholder="问 AI：讲者刚才提到的..." autocomplete="off" spellcheck="false" />
             </div>
           </div>
         </div>
@@ -981,9 +1160,26 @@ class FloatingWidget {
     this.els.tabRecord.addEventListener('click', () => this.switchTab('record'));
     this.els.tabTodo.addEventListener('click', () => this.switchTab('todo'));
     this.els.tabMindmap.addEventListener('click', () => this.switchTab('mindmap'));
+    this.els.tabQa.addEventListener('click', () => this.switchTab('qa'));
     // 思维导图导出
     this.els.mindmapExportMd.addEventListener('click', () => this.onMindmapExportMd());
     this.els.mindmapExportJson.addEventListener('click', () => this.onMindmapExportJson());
+    // Q&A 输入框 Enter 提交
+    this.els.qaInput.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        const question = (this.els.qaInput as HTMLInputElement).value.trim();
+        if (question.length > 0) {
+          this.onQuestion(question);
+          (this.els.qaInput as HTMLInputElement).value = '';
+        }
+      }
+    });
+    // 阻止输入框快捷键冒泡
+    this.els.qaInput.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.altKey || e.ctrlKey) { e.stopPropagation(); }
+    }, true);
     // 下拉箭头：展开/收起标签页区域
     this.els.dropdownBtn.addEventListener('click', () => this.togglePanel());
   }
@@ -997,24 +1193,32 @@ class FloatingWidget {
     this.els.dropdownBtn.classList.toggle('ls-fl-dropdown-open', this.panelExpanded);
   }
 
-  private switchTab(tab: 'record' | 'todo' | 'mindmap') {
+  private switchTab(tab: 'record' | 'todo' | 'mindmap' | 'qa') {
     this.activeTab = tab;
     this.els.tabRecord.classList.toggle('ls-fl-tab-active', tab === 'record');
     this.els.tabTodo.classList.toggle('ls-fl-tab-active', tab === 'todo');
     this.els.tabMindmap.classList.toggle('ls-fl-tab-active', tab === 'mindmap');
+    this.els.tabQa.classList.toggle('ls-fl-tab-active', tab === 'qa');
     this.els.recordPanel.style.display = tab === 'record' ? '' : 'none';
     this.els.todoPanel.style.display = tab === 'todo' ? '' : 'none';
     this.els.mindmapPanel.style.display = tab === 'mindmap' ? '' : 'none';
+    this.els.qaPanel.style.display = tab === 'qa' ? '' : 'none';
     // 移动标签指示器
     if (this.els.tabIndicator) {
       const activeEl = tab === 'record' ? this.els.tabRecord
-        : tab === 'todo' ? this.els.tabTodo : this.els.tabMindmap;
+        : tab === 'todo' ? this.els.tabTodo
+        : tab === 'mindmap' ? this.els.tabMindmap : this.els.tabQa;
       this.els.tabIndicator.style.left = `${activeEl.offsetLeft}px`;
       this.els.tabIndicator.style.width = `${activeEl.offsetWidth}px`;
     }
     // 切换到待办标签时清除新内容提示
     if (tab === 'todo') this.clearTabNotification();
     if (tab === 'mindmap') this.clearMindmapNotification();
+    if (tab === 'qa') {
+      this.els.tabQa.classList.remove('ls-fl-tab-new');
+      // 自动聚焦输入框
+      setTimeout(() => (this.els.qaInput as HTMLInputElement)?.focus(), 100);
+    }
   }
 
   private centerAtBottom() {
@@ -1160,6 +1364,67 @@ class FloatingWidget {
 
   clearMindmapNotification() {
     this.els.tabMindmap.classList.remove('ls-fl-tab-new');
+  }
+
+  /** 显示 Q&A 搜索结果 */
+  addQAResult(result: QAResult) {
+    this.els.qaEmpty.style.display = 'none';
+    this.els.qaHistory.style.display = '';
+    const card = document.createElement('div');
+    card.className = 'ls-qa-card';
+    let answersHtml = '';
+    if (result.answers.length === 0) {
+      answersHtml = '<div class="ls-qa-no-match">未找到相关片段</div>';
+    } else {
+      answersHtml = result.answers.map(a => {
+        const t = new Date(a.timestamp);
+        const ts = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`;
+        return `<div class="ls-qa-match">
+          <div class="ls-qa-match-ts">${ts} · 相关度 ${Math.round(a.relevance * 10) / 10}</div>
+          <span class="ls-qa-match-orig">// ${esc(a.text)}</span>
+          <span class="ls-qa-match-zh">&gt; ${esc(a.translated)}</span>
+        </div>`;
+      }).join('');
+    }
+    card.innerHTML = `
+      <div class="ls-qa-question"><span class="ls-qa-q-icon">?</span> ${esc(result.question)}</div>
+      <div class="ls-qa-answers">${answersHtml}</div>
+    `;
+    this.els.qaHistory.appendChild(card);
+    this.els.qaHistory.scrollTop = this.els.qaHistory.scrollHeight;
+    // 通知标签页
+    if (this.activeTab !== 'qa') this.els.tabQa.classList.add('ls-fl-tab-new');
+  }
+
+  /** 显示开小差补救摘要卡片 */
+  showCatchUpCard(points: CatchUpPoint[]) {
+    if (points.length === 0) return;
+    // 在会议记录面板顶部插入摘要卡
+    const card = document.createElement('div');
+    card.className = 'ls-catchup-card';
+    const itemsHtml = points.map((p, i) => {
+      const t = new Date(p.timestamp);
+      const ts = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+      return `<div class="ls-catchup-item">
+        <span class="ls-catchup-num">${i + 1}</span>
+        <div class="ls-catchup-text">
+          <span class="ls-catchup-zh">${esc(p.translated)}</span>
+          <span class="ls-catchup-ts">${ts}</span>
+        </div>
+      </div>`;
+    }).join('');
+    card.innerHTML = `
+      <div class="ls-catchup-header">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span>过去 5 分钟要点</span>
+        <button class="ls-catchup-close">×</button>
+      </div>
+      <div class="ls-catchup-body">${itemsHtml}</div>
+    `;
+    this.els.transcriptList.insertBefore(card, this.els.transcriptList.firstChild);
+    card.querySelector('.ls-catchup-close')?.addEventListener('click', () => card.remove());
+    // 自动切换到会议记录面板
+    if (this.activeTab !== 'record') this.switchTab('record');
   }
 
   /** 更新思维导图树 */
@@ -1478,6 +1743,8 @@ class Controller {
   private termExtractor = new TermExtractor();
   private tooltipEngine: TooltipEngine;
   private mindmap = new MindMapBuilder();
+  private catchUp: CatchUpEngine;
+  private qaEngine = new QAEngine();
   private visualTerms: string[] = [];
   private sentenceTerms: string[] = [];
   private history: TranslationResult[] = [];
@@ -1495,6 +1762,7 @@ class Controller {
 
   constructor() {
     this.tooltipEngine = new TooltipEngine(this.termExtractor);
+    this.catchUp = new CatchUpEngine(this.termExtractor);
     this.loadConfig();
     this.setupSpeech();
     this.tts.init();
@@ -1590,6 +1858,7 @@ class Controller {
       this.widget.onTermLeave = () => this.tooltipEngine.scheduleHide();
       this.widget.onMindmapExportMd = () => this.exportMindmapMd();
       this.widget.onMindmapExportJson = () => this.exportMindmapJson();
+      this.widget.onQuestion = (q) => this.handleQuestion(q);
       // 音频模式切换按钮
       this.widget.getTabAudioBtn().addEventListener('click', () => this.toggleAudioMode());
       this.widget.setTabAudioMode(this.useTabAudio);
@@ -1717,6 +1986,11 @@ class Controller {
     window.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.altKey && e.key === 't') { e.preventDefault(); this.toggle(); }
       if (e.altKey && e.key === 'e') { e.preventDefault(); this.exportHistory(); }
+      // Ctrl+Enter: 开小差补救
+      if (e.ctrlKey && e.key === 'Enter') {
+        e.preventDefault();
+        this.triggerCatchUp();
+      }
     });
     try {
       chrome.runtime.onMessage.addListener((msg) => {
@@ -1836,6 +2110,20 @@ class Controller {
         setTimeout(() => { btn.innerHTML = orig; }, 1500);
       }
     }).catch(() => { /* */ });
+  }
+
+  // --- 开小差补救: Ctrl+Enter ---
+  private triggerCatchUp() {
+    if (!this.widget || this.history.length === 0) return;
+    const points = this.catchUp.summarize(this.history, 5, 3);
+    this.widget.showCatchUpCard(points);
+  }
+
+  // --- Q&A 问答处理 ---
+  private handleQuestion(question: string) {
+    if (!this.widget) return;
+    const result = this.qaEngine.search(question, this.history);
+    this.widget.addQAResult(result);
   }
 }
 
