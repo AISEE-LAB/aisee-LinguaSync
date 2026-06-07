@@ -254,7 +254,7 @@ class SubtitleOverlay {
     this.originalEl.textContent = original;
     this.translatedEl.textContent = translated;
     this.overlay!.classList.add('ls-sub-visible', 'ls-sub-final');
-    this.hideTimer = setTimeout(() => this.hide(), 8000);
+    this.hideTimer = setTimeout(() => this.hide(), 15000);
   }
 
   hide() {
