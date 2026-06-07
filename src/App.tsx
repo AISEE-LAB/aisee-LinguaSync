@@ -35,33 +35,34 @@ export default function Popup() {
   };
 
   return (
-    <div className="w-[320px] bg-slate-900 text-white font-sans">
-      {/* 头部 */}
-      <div className="px-5 py-4 border-b border-slate-700/50">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-sm font-bold">
-            L
+    <div className="w-[320px] bg-[#0D1117] text-white font-mono">
+      {/* 头部 — 终端标题栏 */}
+      <div className="px-5 py-4 border-b border-[#21262D] bg-[#010409]">
+        <div className="flex items-center gap-3">
+          <div className="w-7 h-7 rounded flex items-center justify-center text-sm font-bold bg-[#161B22] border border-[#30363D] text-[#58A6FF]">
+            {'>'}
           </div>
           <div>
-            <h1 className="text-sm font-semibold tracking-wide">
-              LinguaSync <span className="text-indigo-400">Pro</span>
+            <h1 className="text-sm font-semibold tracking-wider text-[#C9D1D9]" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace" }}>
+              LinguaSync<span className="text-[#58A6FF] ml-1 text-xs bg-[rgba(88,166,255,0.1)] px-1.5 py-0.5 rounded border border-[rgba(88,166,255,0.2)]">PRO</span>
             </h1>
-            <p className="text-[10px] text-slate-400">AI 视频同声传译</p>
+            <p className="text-[10px] text-[#6E7681] mt-0.5">// AI 视频同声传译</p>
           </div>
         </div>
       </div>
 
-      {/* 设置区 */}
+      {/* 设置区 — 终端配置面板 */}
       <div className="p-5 space-y-4">
         {/* 源语言 */}
         <div>
-          <label className="block text-xs font-medium text-slate-300 mb-1.5">
-            源语言
+          <label className="block text-[11px] font-medium text-[#8B949E] mb-2" style={{ fontFamily: "'JetBrains Mono', Consolas, monospace" }}>
+            <span className="text-[#6E7681]">$ </span>source_language
           </label>
           <select
             value={language}
             onChange={(e) => setLanguage(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-sm text-white outline-none focus:border-indigo-500 transition-colors"
+            className="w-full px-3 py-2 rounded bg-[#161B22] border border-[#30363D] text-sm text-[#C9D1D9] outline-none focus:border-[#58A6FF] transition-colors"
+            style={{ fontFamily: "'JetBrains Mono', Consolas, monospace" }}
           >
             {LANGUAGES.map((lang) => (
               <option key={lang.value} value={lang.value}>
@@ -73,11 +74,11 @@ export default function Popup() {
 
         {/* 自动开始 */}
         <div className="flex items-center justify-between">
-          <span className="text-xs text-slate-300">检测到视频时自动开始</span>
+          <span className="text-[11px] text-[#8B949E]"><span className="text-[#6E7681]">$ </span>auto_start</span>
           <button
             onClick={() => setAutoStart(!autoStart)}
-            className={`w-9 h-5 rounded-full transition-colors relative ${
-              autoStart ? 'bg-indigo-600' : 'bg-slate-700'
+            className={`w-9 h-5 rounded transition-colors relative ${
+              autoStart ? 'bg-[#1F6FEB]' : 'bg-[#21262D]'
             }`}
           >
             <div
@@ -90,11 +91,11 @@ export default function Popup() {
 
         {/* 语音朗读 */}
         <div className="flex items-center justify-between">
-          <span className="text-xs text-slate-300">语音朗读翻译</span>
+          <span className="text-[11px] text-[#8B949E]"><span className="text-[#6E7681]">$ </span>tts_voice</span>
           <button
             onClick={() => setTtsEnabled(!ttsEnabled)}
-            className={`w-9 h-5 rounded-full transition-colors relative ${
-              ttsEnabled ? 'bg-emerald-600' : 'bg-slate-700'
+            className={`w-9 h-5 rounded transition-colors relative ${
+              ttsEnabled ? 'bg-[#238636]' : 'bg-[#21262D]'
             }`}
           >
             <div
@@ -107,11 +108,11 @@ export default function Popup() {
 
         {/* 字幕叠加 */}
         <div className="flex items-center justify-between">
-          <span className="text-xs text-slate-300">视频字幕叠加</span>
+          <span className="text-[11px] text-[#8B949E]"><span className="text-[#6E7681]">$ </span>subtitle_overlay</span>
           <button
             onClick={() => setSubtitleEnabled(!subtitleEnabled)}
-            className={`w-9 h-5 rounded-full transition-colors relative ${
-              subtitleEnabled ? 'bg-amber-600' : 'bg-slate-700'
+            className={`w-9 h-5 rounded transition-colors relative ${
+              subtitleEnabled ? 'bg-[#9E6A03]' : 'bg-[#21262D]'
             }`}
           >
             <div
@@ -125,17 +126,28 @@ export default function Popup() {
         {/* 保存按钮 */}
         <button
           onClick={handleSave}
-          className="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"
+          className="w-full py-2 rounded bg-[#21262D] hover:bg-[#30363D] border border-[#30363D] hover:border-[#484F58] text-[#C9D1D9] text-sm font-medium transition-colors"
+          style={{ fontFamily: "'JetBrains Mono', Consolas, monospace" }}
         >
-          {saved ? '已保存' : '保存设置'}
+          {saved ? (
+            <span><span className="text-[#3FB950]">✓</span> saved</span>
+          ) : (
+            <span><span className="text-[#6E7681]">$ </span>save_config</span>
+          )}
         </button>
       </div>
 
       {/* 底部提示 */}
-      <div className="px-5 pb-4">
-        <p className="text-[10px] text-slate-500 leading-relaxed">
-          打开任意含视频的网页，LinguaSync 悬浮窗将自动出现。
-          点击"开始同传"即可实时翻译。推荐使用 Chrome 浏览器。
+      <div className="px-5 pb-4 border-t border-[#21262D] pt-3">
+        <p className="text-[10px] text-[#484F58] leading-relaxed" style={{ fontFamily: "'JetBrains Mono', Consolas, monospace" }}>
+          <span className="text-[#6E7681]">// </span>
+          打开含视频网页 → 悬浮窗自动浮现 → 开始同传
+        </p>
+        <p className="text-[10px] text-[#484F58] leading-relaxed mt-1" style={{ fontFamily: "'JetBrains Mono', Consolas, monospace" }}>
+          <span className="text-[#6E7681]">// </span>
+          <kbd className="text-[#58A6FF] bg-[#161B22] px-1 rounded border border-[#30363D]">Alt+T</kbd> 开关
+          <span className="mx-1">·</span>
+          <kbd className="text-[#58A6FF] bg-[#161B22] px-1 rounded border border-[#30363D]">Alt+E</kbd> 导出
         </p>
       </div>
     </div>

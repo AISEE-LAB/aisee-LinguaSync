@@ -1,10 +1,12 @@
 /**
- * LinguaSync Pro v3 - 内容脚本
+ * LinguaSync Pro v5 - 内容脚本
  *
  * 新增:
+ *  - GitHub Dark 极客终端风 UI — JetBrains Mono 等宽体 + #0D1117 暗黑背景
+ *  - 翻译记录呈现代码日志风格 — // 注释原文 + > 绿色译文 + CRT glow
  *  - 标签页音频直采 (getDisplayMedia) — 不依赖麦克风外放
- *  - 播放自动启动 — 视频开始播放时自动开始同传
- *  - 流式翻译 + 上下文增强 — 防抖翻译 interim 结果，利用历史上下文提升质量
+ *  - TTS 语音朗读 + 字幕叠加 — 双通道呈现
+ *  - 自纠正引擎 — Levenshtein 距离自动修正
  */
 
 // ========== 类型 ==========
@@ -400,7 +402,7 @@ class FloatingWidget {
             <span class="ls-fl-dot"></span>
             <span>LINGUASYNC</span>
             <span class="ls-fl-pro">PRO</span>
-            <span style="font-size:9px;color:#475569;margin-left:4px">v4.1</span>
+            <span style="font-size:9px;color:#484F58;margin-left:4px">v5.0</span>
           </div>
           <div class="ls-fl-audio-bar">${Array.from({length:12}, (_,i) => `<span class="ls-fl-bar-seg" style="--i:${i}"></span>`).join('')}</div>
         </div>
@@ -597,7 +599,7 @@ class FloatingWidget {
     item.className = 'ls-fl-transcript-item';
     const t = new Date(result.timestamp);
     const ts = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
-    item.innerHTML = `<div class="ls-fl-ts-ts">${ts}</div><div><span class="ls-fl-ts-orig">${esc(result.original)}</span><span class="ls-fl-ts-zh">${esc(result.translated)}</span></div>`;
+    item.innerHTML = `<div class="ls-fl-ts-ts">${ts}</div><span class="ls-fl-ts-orig">// ${esc(result.original)}</span><span class="ls-fl-ts-zh">&gt; ${esc(result.translated)}</span>`;
     item.dataset.ts = String(result.timestamp);
     this.els.transcriptList.appendChild(item);
     this.els.transcriptList.scrollTop = this.els.transcriptList.scrollHeight;
@@ -613,7 +615,7 @@ class FloatingWidget {
     ) as HTMLElement | null;
     if (!item) return;
     const zhEl = item.querySelector('.ls-fl-ts-zh');
-    if (zhEl) zhEl.textContent = result.translated;
+    if (zhEl) zhEl.innerHTML = `&gt; ${esc(result.translated)}`;
     // 闪烁高亮提示已修正
     item.classList.add('ls-fl-corrected');
     setTimeout(() => item.classList.remove('ls-fl-corrected'), 1500);
