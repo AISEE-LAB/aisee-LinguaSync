@@ -1,5 +1,5 @@
 /**
- * LinguaSync Pro v5 - 内容脚本
+ * LinguaSync Pro v6 - 内容脚本
  *
  * 新增:
  *  - GitHub Dark 极客终端风 UI — JetBrains Mono 等宽体 + #0D1117 暗黑背景
@@ -7,6 +7,8 @@
  *  - 标签页音频直采 (getDisplayMedia) — 不依赖麦克风外放
  *  - TTS 语音朗读 + 字幕叠加 — 双通道呈现
  *  - 自纠正引擎 — Levenshtein 距离自动修正
+ *  - 知识胶囊 (Live Tooltips) — 专业术语悬浮解释，Wikipedia + 本地词典
+ *  - 实时思维导图 (Auto-Structuring) — 根据讲者逻辑生成结构化大纲
  */
 
 // ========== 类型 ==========
@@ -27,6 +29,8 @@ interface AppConfig {
   ttsEnabled: boolean;
   subtitleEnabled: boolean;
   screenVisionEnabled: boolean;
+  tooltipsEnabled: boolean;
+  mindmapEnabled: boolean;
 }
 
 // ========== 视频检测 ==========
@@ -455,6 +459,308 @@ class ScreenCapture {
   }
 }
 
+// ========== 术语提取器 + 本地词典 (知识胶囊) ==========
+
+interface TermDefinition {
+  term: string;
+  definition: string;
+  source: 'local' | 'wiki';
+}
+
+class TermExtractor {
+  private localDict: Map<string, string> = new Map([
+    // AI / 机器学习
+    ['AGI', '通用人工智能：具备人类水平智能的 AI 系统'],
+    ['AI', '人工智能：模拟人类智能的计算机系统'],
+    ['ML', '机器学习：让计算机从数据中自动学习的技术'],
+    ['DL', '深度学习：使用多层神经网络的机器学习方法'],
+    ['NLP', '自然语言处理：让计算机理解和生成人类语言'],
+    ['NLU', '自然语言理解：NLP 中负责理解语义的子领域'],
+    ['NLG', '自然语言生成：NLP 中负责生成文本的子领域'],
+    ['LLM', '大语言模型：基于 Transformer 的大规模预训练语言模型'],
+    ['GPT', '生成式预训练 Transformer：OpenAI 的自回归语言模型系列'],
+    ['BERT', '双向编码器表示：Google 的双向预训练语言模型'],
+    ['GAN', '生成对抗网络：由生成器和判别器组成的神经网络框架'],
+    ['CNN', '卷积神经网络：擅长图像处理的深度学习架构'],
+    ['RNN', '循环神经网络：处理序列数据的神经网络'],
+    ['LSTM', '长短期记忆网络：解决长距离依赖的 RNN 变体'],
+    ['RLHF', '人类反馈强化学习：用人类偏好对齐模型输出的方法'],
+    ['RAG', '检索增强生成：结合外部知识库检索的 LLM 生成方法'],
+    ['MoE', '混合专家模型：使用多个专家子网络的条件计算架构'],
+    ['CoT', '思维链：让模型逐步推理的提示工程技术'],
+    ['SGD', '随机梯度下降：一种常用的优化算法'],
+    ['MLOps', '机器学习运维：ML 模型的开发、部署和运维实践'],
+    ['T-SNE', 't-分布随机邻域嵌入：高维数据降维可视化算法'],
+    // 架构 / 系统
+    ['API', '应用程序编程接口：软件间的交互协议'],
+    ['REST', '表征状态转移：一种 Web API 设计风格'],
+    ['gRPC', 'Google 远程过程调用：高性能 RPC 框架'],
+    ['SDK', '软件开发工具包：用于开发应用的工具集合'],
+    ['K8s', 'Kubernetes：容器编排和自动化部署平台'],
+    ['K8S', 'Kubernetes：容器编排和自动化部署平台'],
+    ['Docker', '容器化平台：将应用打包为轻量容器的技术'],
+    ['IaC', '基础设施即代码：用代码管理和配置基础设施'],
+    // Web / 协议
+    ['HTML', '超文本标记语言：Web 页面的标准标记语言'],
+    ['CSS', '层叠样式表：用于描述网页呈现的样式语言'],
+    ['DOM', '文档对象模型：网页内容的编程接口'],
+    ['JWT', 'JSON Web Token：紧凑的无状态令牌标准'],
+    ['OAuth', '开放授权：第三方应用安全访问资源的协议'],
+    ['CORS', '跨域资源共享：浏览器安全策略机制'],
+    ['WASM', 'WebAssembly：在浏览器中运行编译代码的二进制格式'],
+    // DevOps / 云
+    ['CI', '持续集成：频繁合并代码并自动测试的实践'],
+    ['CD', '持续交付/部署：自动化软件发布流程'],
+    ['AWS', 'Amazon Web Services：亚马逊云计算服务平台'],
+    ['GCP', 'Google Cloud Platform：谷歌云计算平台'],
+    // 通用技术
+    ['SaaS', '软件即服务：通过云端提供的软件服务模式'],
+    ['PaaS', '平台即服务：提供开发和部署环境的云服务'],
+    ['IaaS', '基础设施即服务：提供计算资源的云服务'],
+    ['IoT', '物联网：互联设备和传感器的网络生态系统'],
+    ['MQTT', '消息队列遥测传输：轻量级 IoT 通信协议'],
+    ['DB', '数据库：结构化存储和管理数据的系统'],
+    ['SQL', '结构化查询语言：用于管理关系型数据库的语言'],
+    ['NoSQL', '非关系型数据库：灵活 schema 的数据库类型'],
+    ['ORM', '对象关系映射：程序对象与数据库表的桥接技术'],
+    ['TDD', '测试驱动开发：先写测试再写代码的开发方法'],
+    ['IDE', '集成开发环境：集成编码工具的软件应用'],
+    ['CLI', '命令行界面：通过文本命令交互的用户界面'],
+    ['MVP', '最小可行产品：具备核心功能的早期产品版本'],
+    ['OKR', '目标与关键结果：目标管理和衡量框架'],
+    ['KPI', '关键绩效指标：衡量业务成效的量化指标'],
+    ['SLA', '服务等级协议：服务可用性和质量的承诺标准'],
+    ['DDoS', '分布式拒绝服务：通过大量请求瘫痪服务的攻击'],
+    // 前沿概念
+    ['AGI', '通用人工智能：具备人类水平智能的 AI 系统'],
+    ['Web3', '基于区块链的去中心化互联网愿景'],
+    ['Rust', '系统编程语言：注重安全和并发的现代编程语言'],
+  ]);
+
+  /** 从英文文本中提取专业术语 */
+  extract(text: string): string[] {
+    const terms: string[] = [];
+    const words = text.split(/\s+/);
+    const seen = new Set<string>();
+    for (const word of words) {
+      const clean = word.replace(/[.,;:!?'")(\]\[]/g, '');
+      if (clean.length < 2) continue;
+      const upper = clean.toUpperCase();
+      if (this.localDict.has(upper) && !seen.has(upper)) {
+        terms.push(upper);
+        seen.add(upper);
+        continue;
+      }
+      if (this.localDict.has(clean) && !seen.has(clean.toUpperCase())) {
+        terms.push(clean);
+        seen.add(clean.toUpperCase());
+        continue;
+      }
+      let score = 0;
+      if (/^[A-Z][A-Z0-9]{1,}$/.test(clean) && clean.length >= 2) score += 3;
+      if (/^[A-Za-z]+[0-9]+[a-z]*/.test(clean) && clean.length >= 2) score += 3;
+      if (/^[A-Z]-[A-Z]+/.test(clean)) score += 3;
+      if (/^[A-Z][a-z]+[A-Z]/.test(clean)) score += 2;
+      if (score >= 3 && !seen.has(clean.toUpperCase())) {
+        terms.push(clean);
+        seen.add(clean.toUpperCase());
+      }
+    }
+    return terms;
+  }
+
+  /** 查询本地词典定义 */
+  getLocalDef(term: string): string | null {
+    return this.localDict.get(term.toUpperCase()) || null;
+  }
+}
+
+// ========== 知识胶囊引擎 (Wikipedia + 本地降级) ==========
+
+class TooltipEngine {
+  private cache = new Map<string, string>();
+  private tooltipEl: HTMLElement | null = null;
+  private hideTimer: ReturnType<typeof setTimeout> | null = null;
+  private extractor: TermExtractor;
+
+  constructor(extractor: TermExtractor) {
+    this.extractor = extractor;
+    this.createTooltip();
+  }
+
+  private createTooltip() {
+    if (this.tooltipEl) return;
+    this.tooltipEl = document.createElement('div');
+    this.tooltipEl.className = 'ls-tooltip';
+    this.tooltipEl.style.display = 'none';
+    document.body.appendChild(this.tooltipEl);
+  }
+
+  /** 获取术语定义：本地词典优先，失败走 Wikipedia */
+  async getDefinition(term: string): Promise<TermDefinition> {
+    const localDef = this.extractor.getLocalDef(term);
+    if (localDef) return { term, definition: localDef, source: 'local' };
+    if (this.cache.has(term)) {
+      return { term, definition: this.cache.get(term)!, source: 'wiki' };
+    }
+    try {
+      const r = await fetch(
+        `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(term)}`
+      );
+      if (r.ok) {
+        const d = await r.json();
+        if (d.extract) {
+          this.cache.set(term, d.extract);
+          return { term, definition: d.extract, source: 'wiki' };
+        }
+      }
+    } catch { /* */ }
+    return { term, definition: `专业术语: ${term}`, source: 'local' };
+  }
+
+  /** 在术语元素上方显示 Tooltip */
+  showNear(el: HTMLElement, def: TermDefinition) {
+    if (!this.tooltipEl) return;
+    if (this.hideTimer) { clearTimeout(this.hideTimer); this.hideTimer = null; }
+    const sourceTag = def.source === 'wiki'
+      ? '<span class="ls-tooltip-src">Wikipedia</span>'
+      : '<span class="ls-tooltip-src ls-tooltip-local">本地词典</span>';
+    this.tooltipEl.innerHTML =
+      `<div class="ls-tooltip-term">${esc(def.term)} ${sourceTag}</div>` +
+      `<div class="ls-tooltip-def">${esc(def.definition)}</div>`;
+    this.tooltipEl.style.display = '';
+    const rect = el.getBoundingClientRect();
+    const tipW = 280;
+    let left = rect.left + rect.width / 2 - tipW / 2;
+    left = Math.max(8, Math.min(window.innerWidth - tipW - 8, left));
+    let top = rect.bottom + 6;
+    if (top + 120 > window.innerHeight) top = rect.top - 80;
+    this.tooltipEl.style.left = `${left}px`;
+    this.tooltipEl.style.top = `${top}px`;
+  }
+
+  /** 延迟隐藏 */
+  scheduleHide(delay = 200) {
+    if (this.hideTimer) clearTimeout(this.hideTimer);
+    this.hideTimer = setTimeout(() => {
+      if (this.tooltipEl) this.tooltipEl.style.display = 'none';
+    }, delay);
+  }
+
+  /** 立即隐藏 */
+  hide() {
+    if (this.hideTimer) clearTimeout(this.hideTimer);
+    if (this.tooltipEl) this.tooltipEl.style.display = 'none';
+  }
+}
+
+// ========== 实时思维导图构建器 ==========
+
+interface MindMapNode {
+  id: string;
+  title: string;
+  level: 'topic' | 'subtopic' | 'point';
+  children: MindMapNode[];
+  expanded: boolean;
+  timestamp: number;
+}
+
+class MindMapBuilder {
+  private root: MindMapNode;
+  private currentTopic: MindMapNode;
+  private idCounter = 0;
+  /** 主题切换关键词 (中/英) */
+  private topicPatterns = [
+    /(?:现在|接下来|下面|首先|其次|最后|然后|另外|此外)/,
+    /(?:让我(?:们)?(?:讨论|看看|介绍|讲解|聊聊))/,
+    /(?:下面(?:我们)?(?:来|将))/,
+    /(?:let'?s|now|next|first|second|finally|moving\s*on)/i,
+    /(?:today\s+(?:we|I)\s+(?:will|'ll|shall|would))/i,
+    /(?:let'?s\s+(?:talk|discuss|explore|dive|look))/i,
+  ];
+  private lastSentence = '';
+
+  constructor() {
+    this.root = this.createNode('演讲大纲', 'topic');
+    this.currentTopic = this.root;
+  }
+
+  private createNode(title: string, level: MindMapNode['level']): MindMapNode {
+    return {
+      id: `mm-${this.idCounter++}`,
+      title, level, children: [],
+      expanded: true, timestamp: Date.now(),
+    };
+  }
+
+  /** 处理新的翻译句子，更新思维导图 */
+  processSentence(original: string, translated: string) {
+    // 过滤过短或重复的句子
+    if (original.trim().length < 5) return;
+    if (similarity(original.trim(), this.lastSentence.trim()) > 0.8) return;
+    this.lastSentence = original;
+
+    const isNewTopic = this.topicPatterns.some(p => p.test(original) || p.test(translated));
+
+    if (isNewTopic || this.root.children.length === 0) {
+      // 提取简短主题标题（优先用译文前 25 字）
+      const topicTitle = translated.length > 25
+        ? translated.slice(0, 25) + '...'
+        : translated;
+      const topic = this.createNode(topicTitle, 'subtopic');
+      this.root.children.push(topic);
+      this.currentTopic = topic;
+    } else {
+      // 作为关键点加入当前主题
+      const pointTitle = translated.length > 45
+        ? translated.slice(0, 45) + '...'
+        : translated;
+      const point = this.createNode(pointTitle, 'point');
+      this.currentTopic.children.push(point);
+      // 每个主题下最多 15 个关键点，避免过长
+      if (this.currentTopic.children.length > 15) {
+        this.currentTopic.children.shift();
+      }
+    }
+  }
+
+  getTree(): MindMapNode { return this.root; }
+
+  /** 切换节点展开/折叠 */
+  toggleNode(nodeId: string): boolean {
+    const node = this.findNode(this.root, nodeId);
+    if (node) { node.expanded = !node.expanded; return node.expanded; }
+    return false;
+  }
+
+  private findNode(root: MindMapNode, id: string): MindMapNode | null {
+    if (root.id === id) return root;
+    for (const child of root.children) {
+      const found = this.findNode(child, id);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  /** 导出为 Markdown */
+  toMarkdown(): string {
+    const lines: string[] = [`# 演讲笔记`, `> LinguaSync Pro 自动生成 · ${new Date().toLocaleDateString()}\n`];
+    for (const topic of this.root.children) {
+      lines.push(`## ${topic.title}`);
+      for (const point of topic.children) {
+        lines.push(`- ${point.title}`);
+      }
+      lines.push('');
+    }
+    return lines.join('\n');
+  }
+
+  /** 导出为 JSON */
+  toJSON(): string {
+    return JSON.stringify(this.root, null, 2);
+  }
+}
+
 // ========== 悬浮控制面板 (v4 - 双标签页) ==========
 
 interface TodoItem {
@@ -471,7 +777,7 @@ class FloatingWidget {
   private dragStart = { x: 0, y: 0 };
   private recording = false;
   private tabAudioActive = false;
-  private activeTab: 'record' | 'todo' = 'record';
+  private activeTab: 'record' | 'todo' | 'mindmap' = 'record';
   private panelExpanded = false;
   private todos: TodoItem[] = [];
 
@@ -480,6 +786,10 @@ class FloatingWidget {
   onTtsToggle: () => void = () => {};
   onSubtitleToggle: () => void = () => {};
   onVisionToggle: () => void = () => {};
+  onTermHover: (el: HTMLElement, term: string) => void = () => {};
+  onTermLeave: () => void = () => {};
+  onMindmapExportMd: () => void = () => {};
+  onMindmapExportJson: () => void = () => {};
 
   constructor() {
     this.root = document.createElement('div');
@@ -502,10 +812,16 @@ class FloatingWidget {
       exportBtn: q('.ls-fl-export-btn'),
       histCount: q('.ls-fl-count'),
       tabRecord: q('.ls-fl-tab-record'), tabTodo: q('.ls-fl-tab-todo'),
+      tabMindmap: q('.ls-fl-tab-mindmap'),
       tabIndicator: q('.ls-fl-tab-indicator'),
       recordPanel: q('.ls-fl-record-panel'), todoPanel: q('.ls-fl-todo-panel'),
       transcriptList: q('.ls-fl-transcript-list'),
       todoList: q('.ls-fl-todo-list'), todoEmpty: q('.ls-fl-todo-empty'),
+      mindmapPanel: q('.ls-fl-mindmap-panel'),
+      mindmapTree: q('.ls-fl-mindmap-tree'),
+      mindmapExportMd: q('.ls-fl-mm-export-md'),
+      mindmapExportJson: q('.ls-fl-mm-export-json'),
+      mindmapEmpty: q('.ls-fl-mindmap-empty'),
       tabAudioBtn: q('.ls-fl-tab-audio-btn'),
       ttsBtn: q('.ls-fl-tts-btn'),
       subBtn: q('.ls-fl-sub-btn'),
@@ -533,7 +849,7 @@ class FloatingWidget {
             <span class="ls-fl-dot"></span>
             <span>LINGUASYNC</span>
             <span class="ls-fl-pro">PRO</span>
-            <span style="font-size:9px;color:#484F58;margin-left:4px">v5.0</span>
+            <span style="font-size:9px;color:#484F58;margin-left:4px">v6.0</span>
           </div>
           <div class="ls-fl-audio-bar">${Array.from({length:12}, (_,i) => `<span class="ls-fl-bar-seg" style="--i:${i}"></span>`).join('')}</div>
         </div>
@@ -578,6 +894,10 @@ class FloatingWidget {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
             智能待办
           </div>
+          <div class="ls-fl-tab ls-fl-tab-mindmap" data-tab="mindmap">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 3v6"/><path d="M12 15v6"/><path d="M3 12h6"/><path d="M15 12h6"/><path d="M5.6 5.6l4.2 4.2"/><path d="M14.2 14.2l4.2 4.2"/></svg>
+            思维导图
+          </div>
           <div class="ls-fl-tab-indicator"></div>
         </div>
         <div class="ls-fl-content-area" style="display:none">
@@ -590,6 +910,23 @@ class FloatingWidget {
             <div class="ls-fl-todo-empty">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
               <span>AI 将在会议中自动为您分配任务</span>
+            </div>
+          </div>
+          <div class="ls-fl-mindmap-panel" style="display:none">
+            <div class="ls-fl-mm-toolbar">
+              <button class="ls-fl-mm-export-md" title="导出 Markdown">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                .md
+              </button>
+              <button class="ls-fl-mm-export-json" title="复制 JSON 到剪贴板">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                JSON
+              </button>
+            </div>
+            <div class="ls-fl-mindmap-tree"></div>
+            <div class="ls-fl-mindmap-empty">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 3v6"/><path d="M12 15v6"/><path d="M3 12h6"/><path d="M15 12h6"/></svg>
+              <span>开始同传后，AI 将实时生成结构化大纲</span>
             </div>
           </div>
         </div>
@@ -643,6 +980,10 @@ class FloatingWidget {
     // 标签页切换
     this.els.tabRecord.addEventListener('click', () => this.switchTab('record'));
     this.els.tabTodo.addEventListener('click', () => this.switchTab('todo'));
+    this.els.tabMindmap.addEventListener('click', () => this.switchTab('mindmap'));
+    // 思维导图导出
+    this.els.mindmapExportMd.addEventListener('click', () => this.onMindmapExportMd());
+    this.els.mindmapExportJson.addEventListener('click', () => this.onMindmapExportJson());
     // 下拉箭头：展开/收起标签页区域
     this.els.dropdownBtn.addEventListener('click', () => this.togglePanel());
   }
@@ -656,20 +997,24 @@ class FloatingWidget {
     this.els.dropdownBtn.classList.toggle('ls-fl-dropdown-open', this.panelExpanded);
   }
 
-  private switchTab(tab: 'record' | 'todo') {
+  private switchTab(tab: 'record' | 'todo' | 'mindmap') {
     this.activeTab = tab;
     this.els.tabRecord.classList.toggle('ls-fl-tab-active', tab === 'record');
     this.els.tabTodo.classList.toggle('ls-fl-tab-active', tab === 'todo');
+    this.els.tabMindmap.classList.toggle('ls-fl-tab-active', tab === 'mindmap');
     this.els.recordPanel.style.display = tab === 'record' ? '' : 'none';
     this.els.todoPanel.style.display = tab === 'todo' ? '' : 'none';
+    this.els.mindmapPanel.style.display = tab === 'mindmap' ? '' : 'none';
     // 移动标签指示器
     if (this.els.tabIndicator) {
-      const activeEl = tab === 'record' ? this.els.tabRecord : this.els.tabTodo;
+      const activeEl = tab === 'record' ? this.els.tabRecord
+        : tab === 'todo' ? this.els.tabTodo : this.els.tabMindmap;
       this.els.tabIndicator.style.left = `${activeEl.offsetLeft}px`;
       this.els.tabIndicator.style.width = `${activeEl.offsetWidth}px`;
     }
     // 切换到待办标签时清除新内容提示
     if (tab === 'todo') this.clearTabNotification();
+    if (tab === 'mindmap') this.clearMindmapNotification();
   }
 
   private centerAtBottom() {
@@ -746,14 +1091,22 @@ class FloatingWidget {
     });
   }
 
-  /** 添加一条会议记录（原文 + 译文） */
-  addHistory(result: TranslationResult) {
+  /** 添加一条会议记录（原文 + 译文），可选术语高亮 */
+  addHistory(result: TranslationResult, terms: string[] = []) {
     const item = document.createElement('div');
     item.className = 'ls-fl-transcript-item';
     const t = new Date(result.timestamp);
     const ts = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
-    item.innerHTML = `<div class="ls-fl-ts-ts">${ts}</div><span class="ls-fl-ts-orig">// ${esc(result.original)}</span><span class="ls-fl-ts-zh">&gt; ${esc(result.translated)}</span>`;
+    const origHtml = this.highlightTerms(result.original, terms);
+    item.innerHTML = `<div class="ls-fl-ts-ts">${ts}</div><span class="ls-fl-ts-orig">// ${origHtml}</span><span class="ls-fl-ts-zh">&gt; ${esc(result.translated)}</span>`;
     item.dataset.ts = String(result.timestamp);
+    // 绑定术语 Tooltip 事件
+    item.querySelectorAll('.ls-term').forEach((el) => {
+      el.addEventListener('mouseenter', () => {
+        this.onTermHover(el as HTMLElement, (el as HTMLElement).dataset.term || '');
+      });
+      el.addEventListener('mouseleave', () => this.onTermLeave());
+    });
     this.els.transcriptList.appendChild(item);
     this.els.transcriptList.scrollTop = this.els.transcriptList.scrollHeight;
     const count = this.els.transcriptList.children.length;
@@ -803,6 +1156,68 @@ class FloatingWidget {
   /** 切换标签页时清除新内容提示 */
   clearTabNotification() {
     this.els.tabTodo.classList.remove('ls-fl-tab-new');
+  }
+
+  clearMindmapNotification() {
+    this.els.tabMindmap.classList.remove('ls-fl-tab-new');
+  }
+
+  /** 更新思维导图树 */
+  updateMindMap(tree: MindMapNode) {
+    if (tree.children.length === 0) return;
+    this.els.mindmapEmpty.style.display = 'none';
+    this.els.mindmapTree.style.display = '';
+    this.els.mindmapTree.innerHTML = this.renderMindMapNode(tree, 0);
+    // 绑定展开/折叠事件
+    this.els.mindmapTree.querySelectorAll('.ls-mm-toggle').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        const nodeEl = (e.target as HTMLElement).closest('.ls-mm-node') as HTMLElement;
+        const childrenEl = nodeEl?.querySelector('.ls-mm-children') as HTMLElement;
+        const toggleEl = nodeEl?.querySelector('.ls-mm-toggle') as HTMLElement;
+        if (childrenEl) {
+          const isHidden = childrenEl.style.display === 'none';
+          childrenEl.style.display = isHidden ? '' : 'none';
+          toggleEl?.classList.toggle('ls-mm-collapsed', !isHidden);
+        }
+      });
+    });
+    // 通知标签页有新内容
+    if (this.activeTab !== 'mindmap') {
+      this.els.tabMindmap.classList.add('ls-fl-tab-new');
+    }
+  }
+
+  private renderMindMapNode(node: MindMapNode, depth: number): string {
+    if (depth > 3) return '';
+    const hasChildren = node.children.length > 0;
+    const indent = depth * 16;
+    const levelClass = `ls-mm-${node.level}`;
+    const toggleIcon = hasChildren
+      ? `<span class="ls-mm-toggle${node.expanded ? '' : ' ls-mm-collapsed'}">
+           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+         </span>`
+      : '<span class="ls-mm-dot"></span>';
+    const childHtml = hasChildren
+      ? `<div class="ls-mm-children" style="display:${node.expanded ? '' : 'none'}">
+           ${node.children.map(c => this.renderMindMapNode(c, depth + 1)).join('')}
+         </div>`
+      : '';
+    return `<div class="ls-mm-node ${levelClass}" style="padding-left:${indent}px">
+      <div class="ls-mm-row">${toggleIcon}<span class="ls-mm-title">${esc(node.title)}</span></div>
+      ${childHtml}
+    </div>`;
+  }
+
+  /** 高亮文本中的术语 */
+  highlightTerms(text: string, terms: string[]): string {
+    if (terms.length === 0) return esc(text);
+    let result = esc(text);
+    for (const term of terms) {
+      const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\b(${escapedTerm})\\b`, 'gi');
+      result = result.replace(regex, '<span class="ls-term" data-term="$1">$1</span>');
+    }
+    return result;
   }
 }
 
@@ -1060,7 +1475,11 @@ class Controller {
   private correction = new SelfCorrectionEngine();
   private tts = new TTSEngine();
   private screenCapture = new ScreenCapture();
+  private termExtractor = new TermExtractor();
+  private tooltipEngine: TooltipEngine;
+  private mindmap = new MindMapBuilder();
   private visualTerms: string[] = [];
+  private sentenceTerms: string[] = [];
   private history: TranslationResult[] = [];
   private currentVideo: HTMLVideoElement | null = null;
   private useTabAudio = false;
@@ -1071,9 +1490,11 @@ class Controller {
     defaultLanguage: 'en-US', translationBackend: 'mymemory',
     openaiApiKey: '', autoStart: false, audioMode: 'microphone',
     ttsEnabled: false, subtitleEnabled: true, screenVisionEnabled: false,
+    tooltipsEnabled: true, mindmapEnabled: true,
   };
 
   constructor() {
+    this.tooltipEngine = new TooltipEngine(this.termExtractor);
     this.loadConfig();
     this.setupSpeech();
     this.tts.init();
@@ -1125,7 +1546,12 @@ class Controller {
       const zh = await translateImmediate(text, this.history, this.visualTerms);
       const result: TranslationResult = { original: text, translated: zh, timestamp: Date.now(), corrected: 0 };
       this.history.push(result);
-      this.widget.addHistory(result);
+      // 提取本句术语
+      this.sentenceTerms = this.termExtractor.extract(text);
+      this.widget.addHistory(result, this.sentenceTerms);
+      // 更新思维导图
+      this.mindmap.processSentence(text, zh);
+      this.widget.updateMindMap(this.mindmap.getTree());
       // 字幕叠加显示
       if (this.subtitleEnabled) this.subtitleOverlay.showFinal(text, zh);
       // TTS 语音朗读翻译结果
@@ -1160,6 +1586,10 @@ class Controller {
       this.widget.onTtsToggle = () => this.toggleTts();
       this.widget.onSubtitleToggle = () => this.toggleSubtitle();
       this.widget.onVisionToggle = () => this.toggleVision();
+      this.widget.onTermHover = (el, term) => this.handleTermHover(el, term);
+      this.widget.onTermLeave = () => this.tooltipEngine.scheduleHide();
+      this.widget.onMindmapExportMd = () => this.exportMindmapMd();
+      this.widget.onMindmapExportJson = () => this.exportMindmapJson();
       // 音频模式切换按钮
       this.widget.getTabAudioBtn().addEventListener('click', () => this.toggleAudioMode());
       this.widget.setTabAudioMode(this.useTabAudio);
@@ -1371,6 +1801,41 @@ class Controller {
         this.widget?.updateHistoryItem(entry);
       }
     }
+  }
+
+  // --- 知识胶囊：术语悬浮 Tooltip ---
+  private async handleTermHover(el: HTMLElement, term: string) {
+    if (!term) return;
+    const def = await this.tooltipEngine.getDefinition(term);
+    this.tooltipEngine.showNear(el, def);
+  }
+
+  // --- 思维导图导出: Markdown ---
+  private exportMindmapMd() {
+    const md = this.mindmap.toMarkdown();
+    if (!md || this.mindmap.getTree().children.length === 0) return;
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `linguasync_mindmap_${new Date().toISOString().slice(0,10)}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // --- 思维导图导出: JSON 到剪贴板 ---
+  private exportMindmapJson() {
+    const json = this.mindmap.toJSON();
+    if (this.mindmap.getTree().children.length === 0) return;
+    navigator.clipboard.writeText(json).then(() => {
+      // 短暂提示
+      const btn = this.widget?.['els']?.mindmapExportJson as HTMLElement | undefined;
+      if (btn) {
+        const orig = btn.innerHTML;
+        btn.innerHTML = '✓ 已复制';
+        setTimeout(() => { btn.innerHTML = orig; }, 1500);
+      }
+    }).catch(() => { /* */ });
   }
 }
 

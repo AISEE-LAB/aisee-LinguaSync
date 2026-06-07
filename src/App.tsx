@@ -17,20 +17,24 @@ export default function Popup() {
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [subtitleEnabled, setSubtitleEnabled] = useState(true);
   const [screenVisionEnabled, setScreenVisionEnabled] = useState(false);
+  const [tooltipsEnabled, setTooltipsEnabled] = useState(true);
+  const [mindmapEnabled, setMindmapEnabled] = useState(true);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    chrome.storage.local.get(['defaultLanguage', 'autoStart', 'ttsEnabled', 'subtitleEnabled', 'screenVisionEnabled'], (result: Record<string, any>) => {
+    chrome.storage.local.get(['defaultLanguage', 'autoStart', 'ttsEnabled', 'subtitleEnabled', 'screenVisionEnabled', 'tooltipsEnabled', 'mindmapEnabled'], (result: Record<string, any>) => {
       if (result.defaultLanguage) setLanguage(result.defaultLanguage as string);
       if (result.autoStart !== undefined) setAutoStart(result.autoStart as boolean);
       if (result.ttsEnabled !== undefined) setTtsEnabled(result.ttsEnabled as boolean);
       if (result.subtitleEnabled !== undefined) setSubtitleEnabled(result.subtitleEnabled as boolean);
       if (result.screenVisionEnabled !== undefined) setScreenVisionEnabled(result.screenVisionEnabled as boolean);
+      if (result.tooltipsEnabled !== undefined) setTooltipsEnabled(result.tooltipsEnabled as boolean);
+      if (result.mindmapEnabled !== undefined) setMindmapEnabled(result.mindmapEnabled as boolean);
     });
   }, []);
 
   const handleSave = () => {
-    chrome.storage.local.set({ defaultLanguage: language, autoStart, ttsEnabled, subtitleEnabled, screenVisionEnabled }, () => {
+    chrome.storage.local.set({ defaultLanguage: language, autoStart, ttsEnabled, subtitleEnabled, screenVisionEnabled, tooltipsEnabled, mindmapEnabled }, () => {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     });
@@ -137,6 +141,40 @@ export default function Popup() {
             <div
               className={`w-3.5 h-3.5 rounded-full bg-white absolute top-[3px] transition-all ${
                 screenVisionEnabled ? 'left-[18px]' : 'left-[3px]'
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* 知识胶囊 */}
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] text-[#8B949E]"><span className="text-[#6E7681]">$ </span>live_tooltips</span>
+          <button
+            onClick={() => setTooltipsEnabled(!tooltipsEnabled)}
+            className={`w-9 h-5 rounded transition-colors relative ${
+              tooltipsEnabled ? 'bg-[#D2A8FF]/40' : 'bg-[#21262D]'
+            }`}
+          >
+            <div
+              className={`w-3.5 h-3.5 rounded-full bg-white absolute top-[3px] transition-all ${
+                tooltipsEnabled ? 'left-[18px]' : 'left-[3px]'
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* 实时思维导图 */}
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] text-[#8B949E]"><span className="text-[#6E7681]">$ </span>auto_mindmap</span>
+          <button
+            onClick={() => setMindmapEnabled(!mindmapEnabled)}
+            className={`w-9 h-5 rounded transition-colors relative ${
+              mindmapEnabled ? 'bg-[#F78166]/50' : 'bg-[#21262D]'
+            }`}
+          >
+            <div
+              className={`w-3.5 h-3.5 rounded-full bg-white absolute top-[3px] transition-all ${
+                mindmapEnabled ? 'left-[18px]' : 'left-[3px]'
               }`}
             />
           </button>

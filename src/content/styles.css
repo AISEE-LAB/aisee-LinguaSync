@@ -556,3 +556,222 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
+
+/* ===== 知识胶囊：术语高亮 ===== */
+
+.ls-term {
+  color: #D2A8FF;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  text-decoration-color: rgba(210,168,255,0.4);
+  cursor: help;
+  transition: all 0.15s ease;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+.ls-term:hover {
+  color: #F0C0FF;
+  background: rgba(210,168,255,0.1);
+  text-decoration-color: #D2A8FF;
+}
+
+/* ===== 知识胶囊：Tooltip 悬浮解释框 ===== */
+
+.ls-tooltip {
+  position: fixed;
+  z-index: 2147483647;
+  width: 280px;
+  padding: 10px 14px;
+  background: #161B22;
+  border: 1px solid #30363D;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5), 0 0 0 1px rgba(48,54,61,0.5);
+  pointer-events: none;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'PingFang SC', 'Microsoft YaHei', monospace;
+  animation: ls-tooltip-in 0.15s ease;
+}
+@keyframes ls-tooltip-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.ls-tooltip-term {
+  font-size: 12px;
+  font-weight: 600;
+  color: #D2A8FF;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ls-tooltip-src {
+  font-size: 9px;
+  font-weight: 400;
+  color: #8B949E;
+  background: rgba(139,148,158,0.1);
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(139,148,158,0.15);
+}
+.ls-tooltip-src.ls-tooltip-local {
+  color: #3FB950;
+  background: rgba(63,185,80,0.08);
+  border-color: rgba(63,185,80,0.2);
+}
+.ls-tooltip-def {
+  font-size: 12px;
+  color: #C9D1D9;
+  line-height: 1.6;
+}
+
+/* ===== 思维导图面板 ===== */
+
+.ls-fl-mindmap-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.ls-fl-mm-toolbar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #21262D;
+  background: rgba(1,4,9,0.5);
+}
+
+.ls-fl-mm-export-md, .ls-fl-mm-export-json {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid #30363D;
+  background: #0D1117;
+  color: #8B949E;
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.ls-fl-mm-export-md:hover, .ls-fl-mm-export-json:hover {
+  background: #161B22;
+  color: #C9D1D9;
+  border-color: #484F58;
+}
+.ls-fl-mm-export-md:active, .ls-fl-mm-export-json:active {
+  background: #21262D;
+}
+
+/* ===== 思维导图树 ===== */
+
+.ls-fl-mindmap-tree {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 8px 0;
+  scroll-behavior: smooth;
+}
+.ls-fl-mindmap-tree::-webkit-scrollbar { width: 6px; }
+.ls-fl-mindmap-tree::-webkit-scrollbar-track { background: #0D1117; }
+.ls-fl-mindmap-tree::-webkit-scrollbar-thumb { background: #30363D; border-radius: 3px; }
+.ls-fl-mindmap-tree::-webkit-scrollbar-thumb:hover { background: #484F58; }
+
+.ls-mm-node {
+  transition: background 0.15s ease;
+}
+.ls-mm-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 5px 12px 5px 4px;
+  cursor: default;
+  border-left: 2px solid transparent;
+  transition: all 0.15s ease;
+}
+.ls-mm-row:hover {
+  background: #161B22;
+  border-left-color: #58A6FF;
+}
+
+/* 展开/折叠箭头 */
+.ls-mm-toggle {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  color: #484F58;
+  transition: transform 0.2s ease, color 0.15s ease;
+  margin-top: 1px;
+}
+.ls-mm-toggle:hover { color: #8B949E; }
+.ls-mm-toggle.ls-mm-collapsed {
+  transform: rotate(-90deg);
+}
+
+/* 叶子节点小圆点 */
+.ls-mm-dot {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+.ls-mm-dot::after {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #30363D;
+}
+
+/* 主题节点 (subtopic) */
+.ls-mm-subtopic > .ls-mm-row .ls-mm-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #58A6FF;
+}
+.ls-mm-subtopic > .ls-mm-row .ls-mm-dot::after {
+  background: #58A6FF;
+  width: 7px;
+  height: 7px;
+}
+
+/* 关键点节点 (point) */
+.ls-mm-point > .ls-mm-row .ls-mm-title {
+  font-size: 12px;
+  color: #C9D1D9;
+  line-height: 1.5;
+}
+.ls-mm-point > .ls-mm-row .ls-mm-dot::after {
+  background: #484F58;
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+}
+
+/* 子节点容器 */
+.ls-mm-children {
+  transition: display 0.2s ease;
+}
+
+/* 思维导图空状态 */
+.ls-fl-mindmap-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 20px;
+  color: #484F58;
+}
+.ls-fl-mindmap-empty svg { opacity: 0.3; color: #30363D; }
+.ls-fl-mindmap-empty span {
+  font-size: 12px;
+  color: #484F58;
+  text-align: center;
+}
