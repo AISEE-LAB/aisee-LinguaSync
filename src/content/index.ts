@@ -26,6 +26,7 @@ interface AppConfig {
   audioMode: 'microphone' | 'tabAudio';
   ttsEnabled: boolean;
   subtitleEnabled: boolean;
+  screenVisionEnabled: boolean;
 }
 
 // ========== 视频检测 ==========
@@ -328,6 +329,132 @@ class TTSEngine {
   }
 }
 
+// ========== 屏幕截图 + 智能变化检测 ==========
+
+interface ScreenText {
+  fullText: string;
+  terms: string[];
+  confidence: number;
+  timestamp: number;
+}
+
+class ScreenCapture {
+  private canvas: HTMLCanvasElement | null = null;
+  private ctx: CanvasRenderingContext2D | null = null;
+  private prevHash: string = '';
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private processing = false;
+  private enabled = false;
+  private interval = 3000;
+  private changeThreshold = 12;
+
+  onScreenText: (screenText: ScreenText) => void = () => {};
+
+  setEnabled(on: boolean) {
+    this.enabled = on;
+    if (on) this.start(); else this.stop();
+  }
+
+  isEnabled(): boolean { return this.enabled; }
+
+  private start() {
+    if (this.timer) return;
+    if (!this.canvas) {
+      this.canvas = document.createElement('canvas');
+      this.canvas.width = 160;
+      this.canvas.height = 90;
+      this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
+    }
+    this.captureAndCompare();
+    this.timer = setInterval(() => this.captureAndCompare(), this.interval);
+  }
+
+  stop() {
+    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+  }
+
+  private async captureAndCompare() {
+    if (this.processing || !this.enabled) return;
+    this.processing = true;
+    try {
+      const response = await this.sendMsg({ type: 'SCREEN_CAPTURE' });
+      if (!response?.dataUrl) { this.processing = false; return; }
+      const img = await this.loadImage(response.dataUrl as string);
+      const hash = this.computeHash(img);
+      const changed = this.isSignificantChange(hash);
+      this.prevHash = hash;
+      if (changed) {
+        const ocrResult = await this.sendMsg({
+          type: 'SCREEN_OCR_REQUEST', imageDataUrl: response.dataUrl,
+        });
+        if (ocrResult?.text) {
+          const terms = this.extractTerms(ocrResult.words || []);
+          this.onScreenText({
+            fullText: ocrResult.text, terms,
+            confidence: ocrResult.confidence || 0,
+            timestamp: Date.now(),
+          });
+        }
+      }
+    } catch { /* ignore */ }
+    finally { this.processing = false; }
+  }
+
+  private computeHash(img: HTMLImageElement): string {
+    if (!this.ctx || !this.canvas) return '';
+    this.ctx.drawImage(img, 0, 0, 160, 90);
+    const data = this.ctx.getImageData(0, 0, 160, 90).data;
+    const samples: number[] = [];
+    for (let i = 0; i < data.length; i += 16) samples.push(data[i]);
+    return samples.join(',');
+  }
+
+  private isSignificantChange(currentHash: string): boolean {
+    if (!this.prevHash) return true;
+    const prev = this.prevHash.split(',').map(Number);
+    const curr = currentHash.split(',').map(Number);
+    if (prev.length !== curr.length) return true;
+    let sumSq = 0;
+    for (let i = 0; i < prev.length; i++) {
+      const diff = prev[i] - curr[i];
+      sumSq += diff * diff;
+    }
+    return (sumSq / prev.length) > this.changeThreshold;
+  }
+
+  private extractTerms(words: string[]): string[] {
+    const stop = new Set([
+      'the','a','an','is','are','was','were','be','been','being',
+      'have','has','had','do','does','did','will','would','could',
+      'should','may','might','shall','can','need','to','of','in',
+      'for','on','with','at','by','from','as','into','through',
+      'during','before','after','and','but','or','not','so','yet',
+      'this','that','these','those','it','its','we','our','you',
+    ]);
+    return words.filter(w => w.length > 2 && !stop.has(w.toLowerCase())).slice(0, 20);
+  }
+
+  private sendMsg(msg: Record<string, any>): Promise<any> {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage(msg, (r) => {
+          if (chrome.runtime.lastError) { resolve(null); return; }
+          resolve(r);
+        });
+      } catch { resolve(null); }
+    });
+  }
+
+  private loadImage(dataUrl: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = dataUrl;
+    });
+  }
+}
+
 // ========== 悬浮控制面板 (v4 - 双标签页) ==========
 
 interface TodoItem {
@@ -352,6 +479,7 @@ class FloatingWidget {
   onExport: () => void = () => {};
   onTtsToggle: () => void = () => {};
   onSubtitleToggle: () => void = () => {};
+  onVisionToggle: () => void = () => {};
 
   constructor() {
     this.root = document.createElement('div');
@@ -381,8 +509,11 @@ class FloatingWidget {
       tabAudioBtn: q('.ls-fl-tab-audio-btn'),
       ttsBtn: q('.ls-fl-tts-btn'),
       subBtn: q('.ls-fl-sub-btn'),
+      visionBtn: q('.ls-fl-vision-btn'),
       ttsLabel: q('.ls-fl-tts-label'),
       subLabel: q('.ls-fl-sub-label'),
+      visionLabel: q('.ls-fl-vision-label'),
+      visionBar: q('.ls-fl-vision-bar'),
       modeLabel: q('.ls-fl-mode-label'),
       onboarding: q('.ls-fl-onboarding'),
       onboardClose: q('.ls-fl-onboard-close'),
@@ -432,6 +563,10 @@ class FloatingWidget {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="16" x2="18" y2="16"/><line x1="6" y1="12" x2="14" y2="12"/></svg>
             <span class="ls-fl-sub-label">字幕</span>
           </button>
+          <button class="ls-fl-vision-btn" title="屏幕视界增强">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <span class="ls-fl-vision-label">视界</span>
+          </button>
           <button class="ls-fl-export-btn" title="导出 (Alt+E)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             导出
@@ -447,6 +582,7 @@ class FloatingWidget {
         </div>
         <div class="ls-fl-content-area" style="display:none">
           <div class="ls-fl-record-panel">
+            <div class="ls-fl-vision-bar" style="display:none"></div>
             <div class="ls-fl-transcript-list"></div>
           </div>
           <div class="ls-fl-todo-panel" style="display:none">
@@ -497,6 +633,8 @@ class FloatingWidget {
     this.els.ttsBtn.addEventListener('click', () => this.onTtsToggle());
     // 字幕叠加开关
     this.els.subBtn.addEventListener('click', () => this.onSubtitleToggle());
+    // 屏幕视界增强开关
+    this.els.visionBtn.addEventListener('click', () => this.onVisionToggle());
     // 新手引导关闭
     this.els.onboardClose.addEventListener('click', () => {
       this.els.onboarding.style.display = 'none';
@@ -579,6 +717,21 @@ class FloatingWidget {
   setSubtitleEnabled(on: boolean) {
     this.els.subBtn.classList.toggle('ls-fl-tab-active', on);
     if (this.els.subLabel) this.els.subLabel.textContent = on ? '字幕开' : '字幕';
+  }
+
+  setVisionEnabled(on: boolean) {
+    this.els.visionBtn.classList.toggle('ls-fl-tab-active', on);
+    if (this.els.visionLabel) this.els.visionLabel.textContent = on ? '视界开' : '视界';
+  }
+
+  /** 更新视觉术语条 */
+  updateVisionTerms(terms: string[]) {
+    if (terms.length === 0) { this.els.visionBar.style.display = 'none'; return; }
+    this.els.visionBar.style.display = '';
+    this.els.visionBar.innerHTML = terms
+      .slice(0, 10)
+      .map(t => `<span class="ls-fl-vision-term">${esc(t)}</span>`)
+      .join('');
   }
 
   getTabAudioBtn(): HTMLElement { return this.els.tabAudioBtn; }
@@ -821,12 +974,16 @@ let pendingResolve: ((v: string) => void) | null = null;
 const DEBOUNCE_MS = 150;
 
 /**
- * 上下文增强的翻译：将最近 3 句翻译作为上下文传给后台。
- * 对 interim 结果做防抖处理（350ms），减少 API 调用。
+ * 上下文增强的翻译：将最近 3 句翻译 + 屏幕术语作为上下文传给后台。
+ * 对 interim 结果做防抖处理（150ms），减少 API 调用。
  */
-function translateImmediate(text: string, context: TranslationResult[]): Promise<string> {
+function translateImmediate(text: string, context: TranslationResult[], screenTerms: string[] = []): Promise<string> {
   return new Promise((resolve) => {
     const contextTexts = context.slice(-3).map((r) => `${r.original} → ${r.translated}`);
+    // 如果有屏幕术语，添加到上下文中
+    if (screenTerms.length > 0) {
+      contextTexts.push(`[Screen terms: ${screenTerms.slice(0, 8).join(', ')}]`);
+    }
     try {
       chrome.runtime.sendMessage(
         { type: 'TRANSLATE', text, backend: 'mymemory', apiKey: '', context: contextTexts },
@@ -844,12 +1001,12 @@ function translateImmediate(text: string, context: TranslationResult[]): Promise
   });
 }
 
-function translateDebounced(text: string, context: TranslationResult[]): Promise<string> {
+function translateDebounced(text: string, context: TranslationResult[], screenTerms: string[] = []): Promise<string> {
   return new Promise((resolve) => {
     if (translateTimer) clearTimeout(translateTimer);
     pendingResolve = resolve;
     translateTimer = setTimeout(async () => {
-      const result = await translateImmediate(text, context);
+      const result = await translateImmediate(text, context, screenTerms);
       if (pendingResolve) { pendingResolve(result); pendingResolve = null; }
     }, DEBOUNCE_MS);
   });
@@ -873,6 +1030,8 @@ class Controller {
   private tabAudio = new TabAudioCapture();
   private correction = new SelfCorrectionEngine();
   private tts = new TTSEngine();
+  private screenCapture = new ScreenCapture();
+  private visualTerms: string[] = [];
   private history: TranslationResult[] = [];
   private currentVideo: HTMLVideoElement | null = null;
   private useTabAudio = false;
@@ -882,13 +1041,14 @@ class Controller {
   private config: AppConfig = {
     defaultLanguage: 'en-US', translationBackend: 'mymemory',
     openaiApiKey: '', autoStart: false, audioMode: 'microphone',
-    ttsEnabled: false, subtitleEnabled: true,
+    ttsEnabled: false, subtitleEnabled: true, screenVisionEnabled: false,
   };
 
   constructor() {
     this.loadConfig();
     this.setupSpeech();
     this.tts.init();
+    this.screenCapture.onScreenText = (st) => this.handleScreenText(st);
     this.startDetection();
     this.setupKeyboard();
   }
@@ -902,6 +1062,7 @@ class Controller {
           if (this.config.audioMode === 'tabAudio') this.useTabAudio = true;
           if (this.config.ttsEnabled) this.tts.setEnabled(true);
           if (this.config.subtitleEnabled === false) this.subtitleEnabled = false;
+          if (this.config.screenVisionEnabled) this.screenCapture.setEnabled(true);
         }
       });
     } catch { /* */ }
@@ -916,7 +1077,7 @@ class Controller {
       if (this.subtitleEnabled) this.subtitleOverlay.showInterim(text, '⋯');
       // 只要有文字就翻译（降低阈值）
       if (text.trim().length > 0) {
-        const zh = await translateDebounced(text, this.history);
+        const zh = await translateDebounced(text, this.history, this.visualTerms);
         if (this.subtitleEnabled) this.subtitleOverlay.showInterim(text, zh);
       }
       // 更新音频指示器（麦克风模式用模拟值，标签页模式用真实值）
@@ -931,8 +1092,8 @@ class Controller {
       if (translateTimer) { clearTimeout(translateTimer); translateTimer = null; }
       // 检测 interim → final 差异，标记不确定的翻译
       this.correction.checkFinal(text);
-      // 立即翻译最终结果（带上下文）
-      const zh = await translateImmediate(text, this.history);
+      // 立即翻译最终结果（带上下文 + 屏幕术语）
+      const zh = await translateImmediate(text, this.history, this.visualTerms);
       const result: TranslationResult = { original: text, translated: zh, timestamp: Date.now(), corrected: 0 };
       this.history.push(result);
       this.widget.addHistory(result);
@@ -969,11 +1130,13 @@ class Controller {
       this.widget.onExport = () => this.exportHistory();
       this.widget.onTtsToggle = () => this.toggleTts();
       this.widget.onSubtitleToggle = () => this.toggleSubtitle();
+      this.widget.onVisionToggle = () => this.toggleVision();
       // 音频模式切换按钮
       this.widget.getTabAudioBtn().addEventListener('click', () => this.toggleAudioMode());
       this.widget.setTabAudioMode(this.useTabAudio);
       this.widget.setTtsEnabled(this.tts.isEnabled());
       this.widget.setSubtitleEnabled(this.subtitleEnabled);
+      this.widget.setVisionEnabled(this.screenCapture.isEnabled());
       this.subtitleOverlay.attach(video);
     }
     // 更新视频目标 + 绑定播放事件
@@ -1019,6 +1182,7 @@ class Controller {
       this.speech.stop();
       this.tabAudio.stop();
       this.tts.stop();
+      this.screenCapture.stop();
       this.widget.setRecording(false);
       this.subtitleOverlay.hide();
       this.widget.setAudioLevel(0);
@@ -1069,6 +1233,24 @@ class Controller {
     this.widget?.setSubtitleEnabled(this.subtitleEnabled);
     if (!this.subtitleEnabled) this.subtitleOverlay.hide();
     try { chrome.storage.local.set({ subtitleEnabled: this.subtitleEnabled }); } catch { /* */ }
+  }
+
+  // --- 切换屏幕视界增强 ---
+  private toggleVision() {
+    const newState = !this.screenCapture.isEnabled();
+    this.screenCapture.setEnabled(newState);
+    this.widget?.setVisionEnabled(newState);
+    if (!newState) {
+      this.visualTerms = [];
+      this.widget?.updateVisionTerms([]);
+    }
+    try { chrome.storage.local.set({ screenVisionEnabled: newState }); } catch { /* */ }
+  }
+
+  // --- 处理屏幕 OCR 结果 ---
+  private handleScreenText(st: ScreenText) {
+    this.visualTerms = st.terms;
+    this.widget?.updateVisionTerms(st.terms);
   }
 
   // --- 快捷键 ---
@@ -1151,7 +1333,7 @@ class Controller {
       const idx = this.history.indexOf(entry);
       if (idx < 0) continue;
       const context = this.history.slice(Math.max(0, idx - 3), idx);
-      const newTranslation = await translateImmediate(entry.original, context);
+      const newTranslation = await translateImmediate(entry.original, context, this.visualTerms);
       if (newTranslation !== entry.translated) {
         entry.translated = newTranslation;
         entry.corrected = (entry.corrected || 0) + 1;

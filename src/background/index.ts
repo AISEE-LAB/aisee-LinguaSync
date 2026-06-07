@@ -89,11 +89,47 @@ async function ensureOffscreenDocument() {
     await (chrome.offscreen as any).createDocument({
       url: 'offscreen.html',
       reasons: ['USER_MEDIA'],
-      justification: 'Audio processing for speech recognition',
+      justification: 'OCR processing via Tesseract.js for screen-aware translation',
     });
   } catch {
     // already exists or not supported
   }
+}
+
+// ---------- 屏幕截图 OCR ----------
+
+/** 截取当前标签页可见区域 */
+async function captureVisibleScreen(): Promise<string | null> {
+  try {
+    const dataUrl = await chrome.tabs.captureVisibleTab(undefined as any, {
+      format: 'jpeg',
+      quality: 75,
+    });
+    return dataUrl;
+  } catch {
+    return null;
+  }
+}
+
+/** 通过 Offscreen Document 执行 OCR */
+async function performScreenOCR(imageDataUrl: string): Promise<{
+  text: string;
+  confidence: number;
+  words: string[];
+}> {
+  await ensureOffscreenDocument();
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { type: 'SCREEN_OCR', imageDataUrl },
+      (response) => {
+        if (chrome.runtime.lastError || !response) {
+          resolve({ text: '', confidence: 0, words: [] });
+          return;
+        }
+        resolve(response);
+      }
+    );
+  });
 }
 
 // ---------- AI 待办提取 ----------
@@ -144,6 +180,7 @@ chrome.runtime.onInstalled.addListener(() => {
     audioMode: 'microphone', // 'microphone' | 'tabAudio'
     ttsEnabled: false,
     subtitleEnabled: true,
+    screenVisionEnabled: false,
   });
 });
 
@@ -175,7 +212,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // 获取配置
   if (message.type === 'GET_CONFIG') {
     chrome.storage.local.get(
-      ['defaultLanguage', 'translationBackend', 'openaiApiKey', 'autoStart', 'audioMode', 'ttsEnabled', 'subtitleEnabled'],
+      ['defaultLanguage', 'translationBackend', 'openaiApiKey', 'autoStart', 'audioMode', 'ttsEnabled', 'subtitleEnabled', 'screenVisionEnabled'],
       (config) => sendResponse(config)
     );
     return true;
@@ -186,6 +223,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     extractTodos(message.text, message.apiKey)
       .then(sendResponse)
       .catch(() => sendResponse({ todos: [] }));
+    return true;
+  }
+
+  // 屏幕截图
+  if (message.type === 'SCREEN_CAPTURE') {
+    captureVisibleScreen()
+      .then((dataUrl) => sendResponse({ dataUrl }))
+      .catch(() => sendResponse({ dataUrl: null }));
+    return true;
+  }
+
+  // 屏幕 OCR
+  if (message.type === 'SCREEN_OCR_REQUEST') {
+    performScreenOCR(message.imageDataUrl)
+      .then(sendResponse)
+      .catch(() => sendResponse({ text: '', confidence: 0, words: [] }));
     return true;
   }
 
