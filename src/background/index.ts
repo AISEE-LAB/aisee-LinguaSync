@@ -101,10 +101,10 @@ async function ensureOffscreenDocument() {
 /** 截取当前标签页可见区域 */
 async function captureVisibleScreen(): Promise<string | null> {
   try {
-    const dataUrl = await chrome.tabs.captureVisibleTab(undefined as any, {
+    const dataUrl = await chrome.tabs.captureVisibleTab({
       format: 'jpeg',
       quality: 75,
-    });
+    } as any);
     return dataUrl;
   } catch {
     return null;
@@ -186,6 +186,9 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const tabId = sender.tab?.id;
+
+  // 忽略来自 Offscreen Document 的内部消息
+  if (message.type === 'SCREEN_OCR') return false;
 
   // 翻译请求
   if (message.type === 'TRANSLATE') {
