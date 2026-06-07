@@ -161,6 +161,45 @@ npm run build
 - **视觉术语注入** — 提取的屏幕术语作为上下文传给翻译 API，提升专业内容翻译质量
 - **术语条** — 识别到的屏幕术语以紫色标签显示在会议记录面板顶部
 
+## 质量保障与校验
+
+扩展在关键环节内置了多层校验机制，确保异常情况下的稳定性和用户体验。
+
+### 翻译 API 响应校验
+
+翻译链路（`fetchFree` + `translateImmediate`）的每一层都包含完整的防护：
+
+- **超时控制** — 使用 `AbortController` 为每个翻译源设置 10 秒超时，后台消息设置 12 秒超时降级，避免无限等待
+- **HTTP 状态码检查** — 非 `2xx` 响应跳过并输出警告日志（如 `MyMemory HTTP 429`）
+- **响应格式校验** — 验证返回 JSON 的数据结构（`responseStatus`、数组嵌套格式），类型不匹配时降级到下一个源
+- **空翻译检测** — 过滤空白结果、与原文完全相同的翻译、以及长度超过原文 5 倍的异常响应
+- **多层降级链** — 后台服务 → MyMemory → Google Translate → 返回原文，任一层失败自动跳到下一层
+
+### 用户输入校验
+
+- **Q&A 输入** — 最大 200 字限制 + 800ms 去抖（防止连续提交），超长时自动截断并提示用户
+- **设置值守护** — `loadConfig()` 对语言格式（`xx-XX` 正则）、音频模式枚举值、所有布尔开关进行类型守卫，非法值回退到默认值
+- **历史为空保护** — Q&A 问答和开小差补救在无转录历史时给出友好提示而非静默失败
+- **导出降级** — 思维导图 JSON 导出在 Clipboard API 不可用时自动降级为文件下载
+
+### 浏览器能力检测
+
+启动同传前对所有依赖的 Web API 做可用性检测，缺失核心能力时弹出详细提示：
+
+| API | 用途 | 缺失时行为 |
+|-----|------|-----------|
+| Web Speech API | 语音识别（核心） | 阻止启动 + 弹窗提示使用 Chrome/Edge |
+| Speech Synthesis | TTS 语音朗读 | 静默禁用 TTS 开关 |
+| getDisplayMedia | 标签页音频捕获 | 标签页音频模式不可用，降级到麦克风 |
+| Clipboard API | 剪贴板写入 | 降级为文件下载 |
+
+### 数据质量过滤
+
+- **术语去噪** — `TermExtractor` 新增噪声黑名单（罗马数字 II/III/IV、常见停用词 THE/AND 等）+ 纯数字过滤，减少误高亮
+- **OCR 置信度阈值** — `ScreenCapture` 仅接受置信度 ≥ 0.5 的 OCR 结果，低质量识别直接丢弃并在 Console 输出调试日志
+- **思维导图节点上限** — `MindMapBuilder` 限制总节点数不超过 50 个，防止长时间讲座导致内存膨胀和 UI 卡顿
+- **Wikipedia 超时** — 术语定义查询加 8 秒超时 + 输入长度限制（100 字），网络异常时回退到本地词典兜底文案
+
 ## 技术架构
 
 ```
@@ -172,14 +211,15 @@ npm run build
 │  ├─ SubtitleOverlay (视频内嵌字幕)                    │
 │  ├─ TTSEngine (Web Speech API 语音合成队列)           │
 │  ├─ SelfCorrectionEngine (Levenshtein 自纠正)         │
-│  ├─ ScreenCapture (截图 + 像素 MSE 变化检测)          │
-│  ├─ TermExtractor (术语提取 + 60+ 本地词典)           │
-│  ├─ TooltipEngine (Wikipedia API + 本地降级)          │
-│  ├─ MindMapBuilder (实时层级大纲 + MD/JSON 导出)      │
+│  ├─ ScreenCapture (截图 + 像素 MSE + 置信度 ≥0.5)    │
+│  ├─ TermExtractor (术语提取 + 噪声过滤 + 60+ 词典)    │
+│  ├─ TooltipEngine (Wikipedia 8s超时 + 本地降级)       │
+│  ├─ MindMapBuilder (实时大纲 + 50 节点上限)           │
 │  ├─ CatchUpEngine (Top-K 要点摘要算法)                │
-│  ├─ QAEngine (关键词搜索 + 时间衰减排序)              │
+│  ├─ QAEngine (关键词搜索 + 200字限制 + 去抖)          │
 │  ├─ FloatingWidget (四标签页悬浮控制面板)              │
-│  └─ 翻译防抖 (150ms) + 上下文增强 + 多层降级          │
+│  ├─ 翻译防抖 (150ms) + AbortController 超时 + 多层降级│
+│  └─ 浏览器能力检测 (Speech/Display/Clipboard 守卫)    │
 ├──────────────────────────────────────────────────────┤
 │  Background Service Worker                           │
 │  ├─ 翻译分发 (MyMemory → Google Translate 降级)       │
@@ -192,7 +232,7 @@ npm run build
 │  └─ Tesseract.js v5 OCR (CDN 加载 + 懒初始化)        │
 ├──────────────────────────────────────────────────────┤
 │  Popup (React + Tailwind CSS v4)                     │
-│  └─ 7 项功能开关 + 源语言设置                         │
+│  └─ 7 项功能开关 + 源语言设置 + 设置值类型守卫        │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -228,6 +268,12 @@ npm run build
 
 **Q: 思维导图导出什么格式？**
 「思维导图」标签页展开后，顶部工具栏有两个按钮：`.md` 下载 Markdown 文件（兼容 Obsidian / Notion），`JSON` 复制结构化数据到剪贴板。
+
+**Q: 翻译一直不出现或很慢怎么办？**
+扩展内置完整的超时和降级机制：每个翻译源 10 秒超时（`AbortController`），后台消息 12 秒超时。如果 MyMemory 和 Google Translate 均不可达，会自动返回原文并在 Console 输出警告。可在 DevTools Network 面板查看具体请求状态码。
+
+**Q: 点击「语音」按钮没有反应？**
+部分浏览器不支持 `SpeechSynthesis` API。启动同传时会检测浏览器能力，缺失核心 API 会弹窗提示。TTS 在支持检测未通过时会自动禁用开关。
 
 ## 许可
 
