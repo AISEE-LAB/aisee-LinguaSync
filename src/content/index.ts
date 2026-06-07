@@ -11,6 +11,9 @@
  *  - 实时思维导图 (Auto-Structuring) — 根据讲者逻辑生成结构化大纲
  *  - 开小差补救 (Catch-up Mode) — Ctrl+Enter 一键总结过去 5 分钟要点
  *  - 流式问答伴侣 (Live Q&A) — 命令行输入框，基于转录缓存即时回答
+ *  - 会话统计面板 (Session Stats) — 翻译句数/词数/语速趋势/高频术语
+ *  - 回放锚点 (Playback Anchors) — 点击会议记录跳转视频时间点
+ *  - 自定义术语表 (Custom Glossary) — 用户词库持久化，翻译时优先匹配
  */
 
 // ========== 类型 ==========
@@ -20,6 +23,7 @@ interface TranslationResult {
   translated: string;
   timestamp: number;
   corrected: number;
+  videoTime?: number;
 }
 
 interface AppConfig {
@@ -981,6 +985,145 @@ class QAEngine {
   }
 }
 
+// ========== 会话统计引擎 (Session Stats) ==========
+
+interface SpeedSample { time: number; wpm: number; }
+
+interface SessionReport {
+  totalSentences: number;
+  totalWords: number;
+  avgWpm: number;
+  sessionMinutes: number;
+  speedHistory: SpeedSample[];
+  topTerms: { term: string; count: number }[];
+  correctedCount: number;
+  qaCount: number;
+}
+
+class SessionStats {
+  private startTime = 0;
+  private totalSentences = 0;
+  private totalWords = 0;
+  private correctedCount = 0;
+  private qaCount = 0;
+  private speedHistory: SpeedSample[] = [];
+  private termFreq = new Map<string, number>();
+  private lastSampleTime = 0;
+  private wordsInWindow = 0;
+  private windowStart = 0;
+
+  start() {
+    this.startTime = Date.now();
+    this.windowStart = Date.now();
+    this.wordsInWindow = 0;
+  }
+
+  recordSentence(original: string, terms: string[]) {
+    this.totalSentences++;
+    const wordCount = original.split(/\s+/).filter(w => w.length > 0).length;
+    this.totalWords += wordCount;
+    this.wordsInWindow += wordCount;
+    // 每 30 秒采样一次语速
+    const now = Date.now();
+    if (now - this.lastSampleTime >= 30000 && this.windowStart > 0) {
+      const elapsedMin = (now - this.windowStart) / 60000;
+      if (elapsedMin > 0) {
+        const wpm = Math.round(this.wordsInWindow / elapsedMin);
+        this.speedHistory.push({ time: now, wpm: Math.min(wpm, 500) }); // 上限 500
+        if (this.speedHistory.length > 60) this.speedHistory.shift(); // 最多保留 60 个采样点
+      }
+      this.windowStart = now;
+      this.wordsInWindow = 0;
+      this.lastSampleTime = now;
+    }
+    // 统计术语频率
+    for (const t of terms) {
+      this.termFreq.set(t, (this.termFreq.get(t) || 0) + 1);
+    }
+  }
+
+  recordCorrection() { this.correctedCount++; }
+  recordQA() { this.qaCount++; }
+
+  getReport(): SessionReport {
+    const elapsed = this.startTime > 0 ? (Date.now() - this.startTime) / 60000 : 0;
+    const avgWpm = elapsed > 0 ? Math.round(this.totalWords / elapsed) : 0;
+    // 按频率排序取 Top 10 术语
+    const sorted = [...this.termFreq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+    return {
+      totalSentences: this.totalSentences,
+      totalWords: this.totalWords,
+      avgWpm: Math.min(avgWpm, 500),
+      sessionMinutes: Math.round(elapsed * 10) / 10,
+      speedHistory: this.speedHistory,
+      topTerms: sorted.map(([term, count]) => ({ term, count })),
+      correctedCount: this.correctedCount,
+      qaCount: this.qaCount,
+    };
+  }
+}
+
+// ========== 自定义术语表 (Custom Glossary) ==========
+
+interface GlossaryEntry {
+  term: string;
+  translation: string;
+}
+
+class CustomGlossary {
+  private entries = new Map<string, string>();
+  private storageKey = 'ls_custom_glossary';
+
+  constructor() { this.load(); }
+
+  /** 从 chrome.storage 加载 */
+  private load() {
+    try {
+      chrome.storage.local.get([this.storageKey], (res: Record<string, any>) => {
+        if (res[this.storageKey] && Array.isArray(res[this.storageKey])) {
+          for (const e of res[this.storageKey] as GlossaryEntry[]) {
+            if (e.term && e.translation) this.entries.set(e.term.toLowerCase(), e.translation);
+          }
+        }
+      });
+    } catch { /* */ }
+  }
+
+  /** 持久化到 chrome.storage */
+  private save() {
+    const arr = [...this.entries.entries()].map(([term, translation]) => ({ term, translation }));
+    try { chrome.storage.local.set({ [this.storageKey]: arr }); } catch { /* */ }
+  }
+
+  /** 查询术语的自定义翻译 */
+  get(term: string): string | null {
+    return this.entries.get(term.toLowerCase()) || null;
+  }
+
+  /** 添加或更新术语 */
+  add(term: string, translation: string): boolean {
+    if (!term || !translation || term.length > 50 || translation.length > 100) return false;
+    this.entries.set(term.toLowerCase().trim(), translation.trim());
+    this.save();
+    return true;
+  }
+
+  /** 删除术语 */
+  remove(term: string): boolean {
+    const deleted = this.entries.delete(term.toLowerCase());
+    if (deleted) this.save();
+    return deleted;
+  }
+
+  /** 获取所有条目 */
+  getAll(): GlossaryEntry[] {
+    return [...this.entries.entries()].map(([term, translation]) => ({ term, translation }));
+  }
+
+  /** 条目数 */
+  get size(): number { return this.entries.size; }
+}
+
 // ========== 悬浮控制面板 (v4 - 双标签页) ==========
 
 interface TodoItem {
@@ -997,7 +1140,7 @@ class FloatingWidget {
   private dragStart = { x: 0, y: 0 };
   private recording = false;
   private tabAudioActive = false;
-  private activeTab: 'record' | 'todo' | 'mindmap' | 'qa' = 'record';
+  private activeTab: 'record' | 'todo' | 'mindmap' | 'qa' | 'stats' | 'glossary' = 'record';
   private panelExpanded = false;
   private todos: TodoItem[] = [];
 
@@ -1011,6 +1154,11 @@ class FloatingWidget {
   onMindmapExportMd: () => void = () => {};
   onMindmapExportJson: () => void = () => {};
   onQuestion: (question: string) => void = () => {};
+  onGlossaryAdd: (term: string, translation: string) => boolean = () => false;
+  onGlossaryRemove: (term: string) => boolean = () => false;
+  onGlossaryGetAll: () => GlossaryEntry[] = () => [];
+  onGetStats: () => SessionReport | null = () => null;
+  onSeekToTime: (time: number) => void = () => {};
 
   constructor() {
     this.root = document.createElement('div');
@@ -1035,6 +1183,8 @@ class FloatingWidget {
       tabRecord: q('.ls-fl-tab-record'), tabTodo: q('.ls-fl-tab-todo'),
       tabMindmap: q('.ls-fl-tab-mindmap'),
       tabQa: q('.ls-fl-tab-qa'),
+      tabStats: q('.ls-fl-tab-stats'),
+      tabGlossary: q('.ls-fl-tab-glossary'),
       tabIndicator: q('.ls-fl-tab-indicator'),
       recordPanel: q('.ls-fl-record-panel'), todoPanel: q('.ls-fl-todo-panel'),
       transcriptList: q('.ls-fl-transcript-list'),
@@ -1048,6 +1198,15 @@ class FloatingWidget {
       qaInput: q('.ls-fl-qa-input'),
       qaHistory: q('.ls-fl-qa-history'),
       qaEmpty: q('.ls-fl-qa-empty'),
+      statsPanel: q('.ls-fl-stats-panel'),
+      statsContent: q('.ls-fl-stats-content'),
+      statsRefresh: q('.ls-fl-stats-refresh'),
+      glossaryPanel: q('.ls-fl-glossary-panel'),
+      glossaryList: q('.ls-fl-glossary-list'),
+      glossaryEmpty: q('.ls-fl-glossary-empty'),
+      glossaryTerm: q('.ls-fl-glossary-term'),
+      glossaryTranslation: q('.ls-fl-glossary-translation'),
+      glossaryAddBtn: q('.ls-fl-glossary-add'),
       tabAudioBtn: q('.ls-fl-tab-audio-btn'),
       ttsBtn: q('.ls-fl-tts-btn'),
       subBtn: q('.ls-fl-sub-btn'),
@@ -1075,7 +1234,7 @@ class FloatingWidget {
             <span class="ls-fl-dot"></span>
             <span>LINGUASYNC</span>
             <span class="ls-fl-pro">PRO</span>
-            <span style="font-size:9px;color:#484F58;margin-left:4px">v7.0</span>
+            <span style="font-size:9px;color:#484F58;margin-left:4px">v7.1</span>
           </div>
           <div class="ls-fl-audio-bar">${Array.from({length:12}, (_,i) => `<span class="ls-fl-bar-seg" style="--i:${i}"></span>`).join('')}</div>
         </div>
@@ -1128,6 +1287,14 @@ class FloatingWidget {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
             问答
           </div>
+          <div class="ls-fl-tab ls-fl-tab-stats" data-tab="stats">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            统计
+          </div>
+          <div class="ls-fl-tab ls-fl-tab-glossary" data-tab="glossary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            术语
+          </div>
           <div class="ls-fl-tab-indicator"></div>
         </div>
         <div class="ls-fl-content-area" style="display:none">
@@ -1168,6 +1335,34 @@ class FloatingWidget {
             <div class="ls-fl-qa-input-bar">
               <span class="ls-fl-qa-prompt">$</span>
               <input class="ls-fl-qa-input" type="text" placeholder="问 AI：讲者刚才提到的..." autocomplete="off" spellcheck="false" />
+            </div>
+          </div>
+          <div class="ls-fl-stats-panel" style="display:none">
+            <div class="ls-fl-stats-toolbar">
+              <button class="ls-fl-stats-refresh" title="刷新统计">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                刷新
+              </button>
+            </div>
+            <div class="ls-fl-stats-content">
+              <div class="ls-stats-empty">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                <span>开始同传后查看会话统计数据</span>
+              </div>
+            </div>
+          </div>
+          <div class="ls-fl-glossary-panel" style="display:none">
+            <div class="ls-fl-glossary-toolbar">
+              <input class="ls-fl-glossary-term" type="text" placeholder="术语 (如 Transformer)" maxlength="50" />
+              <input class="ls-fl-glossary-translation" type="text" placeholder="翻译 (如 变换器架构)" maxlength="100" />
+              <button class="ls-fl-glossary-add" title="添加术语">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </div>
+            <div class="ls-fl-glossary-list"></div>
+            <div class="ls-fl-glossary-empty">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+              <span>添加自定义术语，翻译时优先匹配</span>
             </div>
           </div>
         </div>
@@ -1223,6 +1418,8 @@ class FloatingWidget {
     this.els.tabTodo.addEventListener('click', () => this.switchTab('todo'));
     this.els.tabMindmap.addEventListener('click', () => this.switchTab('mindmap'));
     this.els.tabQa.addEventListener('click', () => this.switchTab('qa'));
+    this.els.tabStats.addEventListener('click', () => { this.switchTab('stats'); this.renderStats(); });
+    this.els.tabGlossary.addEventListener('click', () => { this.switchTab('glossary'); this.renderGlossary(); });
     // 思维导图导出
     this.els.mindmapExportMd.addEventListener('click', () => this.onMindmapExportMd());
     this.els.mindmapExportJson.addEventListener('click', () => this.onMindmapExportJson());
@@ -1258,6 +1455,38 @@ class FloatingWidget {
     }, true);
     // 下拉箭头：展开/收起标签页区域
     this.els.dropdownBtn.addEventListener('click', () => this.togglePanel());
+    // 统计面板刷新
+    this.els.statsRefresh.addEventListener('click', () => this.renderStats());
+    // 术语表添加按钮
+    this.els.glossaryAddBtn.addEventListener('click', () => {
+      const term = (this.els.glossaryTerm as HTMLInputElement).value.trim();
+      const translation = (this.els.glossaryTranslation as HTMLInputElement).value.trim();
+      if (term && translation) {
+        const ok = this.onGlossaryAdd(term, translation);
+        if (ok) {
+          (this.els.glossaryTerm as HTMLInputElement).value = '';
+          (this.els.glossaryTranslation as HTMLInputElement).value = '';
+          this.renderGlossary();
+        }
+      }
+    });
+    // 术语表输入框 Enter 提交
+    this.els.glossaryTranslation.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter') { e.preventDefault(); this.els.glossaryAddBtn.click(); }
+    });
+    // 会议记录点击事件委托（回放锚点）
+    this.els.transcriptList.addEventListener('click', (e: MouseEvent) => {
+      const item = (e.target as HTMLElement).closest('.ls-fl-transcript-item') as HTMLElement;
+      if (item && item.dataset.ts && item.dataset.vtime) {
+        const vtime = parseFloat(item.dataset.vtime);
+        if (!isNaN(vtime) && vtime >= 0) {
+          this.onSeekToTime(vtime);
+          // 高亮效果
+          item.classList.add('ls-fl-anchor-flash');
+          setTimeout(() => item.classList.remove('ls-fl-anchor-flash'), 1500);
+        }
+      }
+    });
   }
 
   /** 展开或收起底部的工具栏/会议记录/智能待办区域 */
@@ -1269,21 +1498,28 @@ class FloatingWidget {
     this.els.dropdownBtn.classList.toggle('ls-fl-dropdown-open', this.panelExpanded);
   }
 
-  private switchTab(tab: 'record' | 'todo' | 'mindmap' | 'qa') {
+  private switchTab(tab: 'record' | 'todo' | 'mindmap' | 'qa' | 'stats' | 'glossary') {
     this.activeTab = tab;
     this.els.tabRecord.classList.toggle('ls-fl-tab-active', tab === 'record');
     this.els.tabTodo.classList.toggle('ls-fl-tab-active', tab === 'todo');
     this.els.tabMindmap.classList.toggle('ls-fl-tab-active', tab === 'mindmap');
     this.els.tabQa.classList.toggle('ls-fl-tab-active', tab === 'qa');
+    this.els.tabStats.classList.toggle('ls-fl-tab-active', tab === 'stats');
+    this.els.tabGlossary.classList.toggle('ls-fl-tab-active', tab === 'glossary');
     this.els.recordPanel.style.display = tab === 'record' ? '' : 'none';
     this.els.todoPanel.style.display = tab === 'todo' ? '' : 'none';
     this.els.mindmapPanel.style.display = tab === 'mindmap' ? '' : 'none';
     this.els.qaPanel.style.display = tab === 'qa' ? '' : 'none';
+    this.els.statsPanel.style.display = tab === 'stats' ? '' : 'none';
+    this.els.glossaryPanel.style.display = tab === 'glossary' ? '' : 'none';
     // 移动标签指示器
     if (this.els.tabIndicator) {
       const activeEl = tab === 'record' ? this.els.tabRecord
         : tab === 'todo' ? this.els.tabTodo
-        : tab === 'mindmap' ? this.els.tabMindmap : this.els.tabQa;
+        : tab === 'mindmap' ? this.els.tabMindmap
+        : tab === 'qa' ? this.els.tabQa
+        : tab === 'stats' ? this.els.tabStats
+        : this.els.tabGlossary;
       this.els.tabIndicator.style.left = `${activeEl.offsetLeft}px`;
       this.els.tabIndicator.style.width = `${activeEl.offsetWidth}px`;
     }
@@ -1378,8 +1614,13 @@ class FloatingWidget {
     const t = new Date(result.timestamp);
     const ts = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
     const origHtml = this.highlightTerms(result.original, terms);
-    item.innerHTML = `<div class="ls-fl-ts-ts">${ts}</div><span class="ls-fl-ts-orig">// ${origHtml}</span><span class="ls-fl-ts-zh">&gt; ${esc(result.translated)}</span>`;
+    // 回放锚点：如果有视频时间，显示播放图标
+    const anchorIcon = result.videoTime != null && result.videoTime >= 0
+      ? `<span class="ls-fl-anchor-icon" title="点击跳转到 ${Math.round(result.videoTime)}s"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>`
+      : '';
+    item.innerHTML = `<div class="ls-fl-ts-ts">${ts}${anchorIcon}</div><span class="ls-fl-ts-orig">// ${origHtml}</span><span class="ls-fl-ts-zh">&gt; ${esc(result.translated)}</span>`;
     item.dataset.ts = String(result.timestamp);
+    if (result.videoTime != null) item.dataset.vtime = String(result.videoTime);
     // 绑定术语 Tooltip 事件
     item.querySelectorAll('.ls-term').forEach((el) => {
       el.addEventListener('mouseenter', () => {
@@ -1559,6 +1800,78 @@ class FloatingWidget {
       result = result.replace(regex, '<span class="ls-term" data-term="$1">$1</span>');
     }
     return result;
+  }
+
+  /** 渲染统计面板 */
+  renderStats() {
+    const report = this.onGetStats();
+    if (!report || report.totalSentences === 0) {
+      this.els.statsContent.innerHTML = `<div class="ls-stats-empty">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        <span>暂无统计数据，开始同传后自动记录</span>
+      </div>`;
+      return;
+    }
+    // 语速趋势 SVG 折线图
+    let chartSvg = '';
+    if (report.speedHistory.length >= 2) {
+      const w = 260, h = 80, pad = 4;
+      const maxWpm = Math.max(...report.speedHistory.map(s => s.wpm), 1);
+      const points = report.speedHistory.map((s, i) => {
+        const x = pad + (i / (report.speedHistory.length - 1)) * (w - pad * 2);
+        const y = h - pad - (s.wpm / maxWpm) * (h - pad * 2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+      chartSvg = `<svg class="ls-stats-chart" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+        <polyline points="${points}" fill="none" stroke="#58A6FF" stroke-width="1.5" stroke-linejoin="round"/>
+        <line x1="${pad}" y1="${h - pad}" x2="${w - pad}" y2="${h - pad}" stroke="#30363D" stroke-width="0.5"/>
+        <text x="${w - pad}" y="${h - 2}" fill="#484F58" font-size="8" text-anchor="end">${maxWpm} wpm</text>
+      </svg>`;
+    }
+    // Top 术语
+    const termsHtml = report.topTerms.length > 0
+      ? report.topTerms.map(t => `<span class="ls-stats-term">${esc(t.term)}<sup>${t.count}</sup></span>`).join('')
+      : '<span style="color:#484F58">暂无术语</span>';
+    this.els.statsContent.innerHTML = `
+      <div class="ls-stats-grid">
+        <div class="ls-stats-card"><div class="ls-stats-val">${report.totalSentences}</div><div class="ls-stats-label">翻译句数</div></div>
+        <div class="ls-stats-card"><div class="ls-stats-val">${report.totalWords}</div><div class="ls-stats-label">总词数</div></div>
+        <div class="ls-stats-card"><div class="ls-stats-val">${report.avgWpm}</div><div class="ls-stats-label">平均语速 (wpm)</div></div>
+        <div class="ls-stats-card"><div class="ls-stats-val">${report.sessionMinutes}′</div><div class="ls-stats-label">会话时长</div></div>
+        <div class="ls-stats-card"><div class="ls-stats-val">${report.correctedCount}</div><div class="ls-stats-label">自纠正次数</div></div>
+        <div class="ls-stats-card"><div class="ls-stats-val">${report.qaCount}</div><div class="ls-stats-label">问答次数</div></div>
+      </div>
+      ${chartSvg ? `<div class="ls-stats-section"><div class="ls-stats-section-title">语速趋势</div>${chartSvg}</div>` : ''}
+      <div class="ls-stats-section"><div class="ls-stats-section-title">高频术语 Top ${report.topTerms.length}</div><div class="ls-stats-terms">${termsHtml}</div></div>
+    `;
+  }
+
+  /** 渲染术语表面板 */
+  renderGlossary() {
+    const entries = this.onGlossaryGetAll();
+    if (entries.length === 0) {
+      this.els.glossaryEmpty.style.display = '';
+      this.els.glossaryList.style.display = 'none';
+      return;
+    }
+    this.els.glossaryEmpty.style.display = 'none';
+    this.els.glossaryList.style.display = '';
+    this.els.glossaryList.innerHTML = entries.map(e => `
+      <div class="ls-glossary-item">
+        <span class="ls-glossary-term-tag">${esc(e.term)}</span>
+        <span class="ls-glossary-arrow">→</span>
+        <span class="ls-glossary-trans">${esc(e.translation)}</span>
+        <button class="ls-glossary-del" data-term="${esc(e.term)}" title="删除">×</button>
+      </div>
+    `).join('');
+    // 绑定删除事件
+    this.els.glossaryList.querySelectorAll('.ls-glossary-del').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const term = (btn as HTMLElement).dataset.term || '';
+        this.onGlossaryRemove(term);
+        this.renderGlossary();
+      });
+    });
   }
 }
 
@@ -1876,6 +2189,8 @@ class Controller {
   private mindmap = new MindMapBuilder();
   private catchUp: CatchUpEngine;
   private qaEngine = new QAEngine();
+  private sessionStats = new SessionStats();
+  private customGlossary = new CustomGlossary();
   private visualTerms: string[] = [];
   private sentenceTerms: string[] = [];
   private history: TranslationResult[] = [];
@@ -1955,9 +2270,19 @@ class Controller {
       if (translateTimer) { clearTimeout(translateTimer); translateTimer = null; }
       // 检测 interim → final 差异，标记不确定的翻译
       this.correction.checkFinal(text);
-      // 立即翻译最终结果（带上下文 + 屏幕术语）
-      const zh = await translateImmediate(text, this.history, this.visualTerms);
-      const result: TranslationResult = { original: text, translated: zh, timestamp: Date.now(), corrected: 0 };
+      // 立即翻译最终结果（带上下文 + 屏幕术语 + 自定义术语表）
+      // 翻译前注入自定义术语
+      const glossaryHits: string[] = [];
+      for (const entry of this.customGlossary.getAll()) {
+        if (text.toLowerCase().includes(entry.term.toLowerCase())) {
+          glossaryHits.push(`[${entry.term}=${entry.translation}]`);
+        }
+      }
+      const enrichedScreenTerms = [...this.visualTerms, ...glossaryHits];
+      const zh = await translateImmediate(text, this.history, enrichedScreenTerms);
+      // 存储视频时间用于回放锚点
+      const videoTime = this.currentVideo ? this.currentVideo.currentTime : undefined;
+      const result: TranslationResult = { original: text, translated: zh, timestamp: Date.now(), corrected: 0, videoTime };
       this.history.push(result);
       // 提取本句术语
       this.sentenceTerms = this.termExtractor.extract(text);
@@ -1973,6 +2298,8 @@ class Controller {
       this.extractTodos(zh);
       // 触发历史自纠正
       this.runCorrections();
+      // 记录统计
+      this.sessionStats.recordSentence(text, this.sentenceTerms);
     };
 
     this.speech.onError = (err) => { console.warn('[LinguaSync]', err); };
@@ -2004,6 +2331,11 @@ class Controller {
       this.widget.onMindmapExportMd = () => this.exportMindmapMd();
       this.widget.onMindmapExportJson = () => this.exportMindmapJson();
       this.widget.onQuestion = (q) => this.handleQuestion(q);
+      this.widget.onGlossaryAdd = (term, translation) => this.customGlossary.add(term, translation);
+      this.widget.onGlossaryRemove = (term) => this.customGlossary.remove(term);
+      this.widget.onGlossaryGetAll = () => this.customGlossary.getAll();
+      this.widget.onGetStats = () => this.sessionStats.getReport();
+      this.widget.onSeekToTime = (time) => this.seekToTime(time);
       // 音频模式切换按钮
       this.widget.getTabAudioBtn().addEventListener('click', () => this.toggleAudioMode());
       this.widget.setTabAudioMode(this.useTabAudio);
@@ -2067,6 +2399,7 @@ class Controller {
       this.widget.setAudioLevel(0);
     } else {
       // 启动
+      this.sessionStats.start();
       if (this.useTabAudio && this.currentVideo) {
         this.widget.setAudioLevel(0.5);
         const ok = await this.tabAudio.start(this.currentVideo);
@@ -2226,6 +2559,7 @@ class Controller {
         entry.translated = newTranslation;
         entry.corrected = (entry.corrected || 0) + 1;
         this.correction.markCorrected(entry.original);
+        this.sessionStats.recordCorrection();
         // 更新会议记录面板（闪烁高亮）
         this.widget?.updateHistoryItem(entry);
       }
@@ -2296,6 +2630,7 @@ class Controller {
     // 输入校验
     if (!question || question.trim().length === 0) return;
     if (question.length > 200) question = question.slice(0, 200);
+    this.sessionStats.recordQA();
     // 历史为空时给出提示
     if (this.history.length === 0) {
       this.widget.addQAResult({
@@ -2306,6 +2641,17 @@ class Controller {
     }
     const result = this.qaEngine.search(question, this.history);
     this.widget.addQAResult(result);
+  }
+
+  // --- 回放锚点：跳转视频到指定时间 ---
+  private seekToTime(time: number) {
+    if (!this.currentVideo) return;
+    // 校验时间范围
+    if (time < 0 || time > this.currentVideo.duration) return;
+    this.currentVideo.currentTime = time;
+    // 如果视频暂停，自动播放
+    if (this.currentVideo.paused) this.currentVideo.play().catch(() => {});
+    console.log(`[LinguaSync] Seek to ${time.toFixed(1)}s`);
   }
 }
 
