@@ -2,7 +2,10 @@
 
 Chrome 扩展，在任何视频网页上浮现 AI 同声传译悬浮窗。播放外语视频时自动识别语音、实时翻译为中文，字幕叠加在视频画面上。内置知识胶囊术语解释、实时思维导图、开小差补救、流式问答伴侣等智能辅助功能。
 
-> **▶ [观看演示视频](https://github.com/qq1906198507-ai/AIst/releases/download/v7.0.0/LinguaSync-Pro-v7-demo.mp4)** — 完整功能演示（实时同传 · 知识胶囊 · 思维导图 · 开小差补救 · 流式问答）
+> **▶ 演示视频 (Demo)** — 完整功能演示（实时同传 · 知识胶囊 · 思维导图 · 开小差补救 · 流式问答）
+>
+> - [GitHub Release 下载](https://github.com/qq1906198507-ai/AIst/releases/download/v7.0.0/LinguaSync-Pro-v7-demo.mp4)
+> - [百度网盘](https://pan.baidu.com/s/1LW3uPIpZml6NUkz-fMFdbA) 提取码: `2amw`
 
 ## 功能一览
 
