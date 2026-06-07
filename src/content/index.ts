@@ -157,6 +157,11 @@ class TabAudioCapture {
    * 同时静音原始视频避免双重声音。
    */
   async start(video: HTMLVideoElement): Promise<boolean> {
+    // 浏览器能力检测
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      console.warn('[LinguaSync] getDisplayMedia API not supported in this browser');
+      return false;
+    }
     try {
       this.stream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
@@ -267,16 +272,27 @@ class SubtitleOverlay {
 // ========== TTS 语音朗读引擎 ==========
 
 class TTSEngine {
-  private synth = window.speechSynthesis;
+  private synth: SpeechSynthesis | null = null;
   private queue: string[] = [];
   private speaking = false;
   private enabled = false;
   private voice: SpeechSynthesisVoice | null = null;
   private rate = 1.0;
+  private supported = false;
 
-  /** 初始化：等待语音列表加载并选择中文语音 */
+  /** 初始化：检测 speechSynthesis 可用性并选择中文语音 */
   init() {
+    // 浏览器能力检测
+    if (typeof window.speechSynthesis === 'undefined') {
+      this.supported = false;
+      console.warn('[LinguaSync] speechSynthesis API not available');
+      return;
+    }
+    this.synth = window.speechSynthesis;
+    this.supported = true;
+
     const pickVoice = () => {
+      if (!this.synth) return;
       const voices = this.synth.getVoices();
       // 优先选 zh-CN，其次 zh-TW/zh-HK，再次任意中文
       this.voice =
@@ -290,6 +306,8 @@ class TTSEngine {
     }
   }
 
+  isSupported(): boolean { return this.supported; }
+
   setEnabled(on: boolean) {
     this.enabled = on;
     if (!on) this.stop();
@@ -301,13 +319,16 @@ class TTSEngine {
 
   /** 朗读一段中文翻译 */
   speak(text: string) {
+    if (!this.supported || !this.synth) return;
     if (!this.enabled || !text || text.trim().length === 0) return;
-    this.queue.push(text);
+    // 文本长度保护：过长文本截断
+    const safeText = text.length > 500 ? text.slice(0, 500) + '...' : text;
+    this.queue.push(safeText);
     this.processQueue();
   }
 
   private processQueue() {
-    if (this.speaking || this.queue.length === 0) return;
+    if (!this.synth || this.speaking || this.queue.length === 0) return;
     this.speaking = true;
     const text = this.queue.shift()!;
     const utterance = new SpeechSynthesisUtterance(text);
@@ -331,7 +352,7 @@ class TTSEngine {
   stop() {
     this.queue = [];
     this.speaking = false;
-    if (this.synth.speaking) this.synth.cancel();
+    if (this.synth?.speaking) this.synth.cancel();
   }
 }
 
@@ -394,12 +415,18 @@ class ScreenCapture {
           type: 'SCREEN_OCR_REQUEST', imageDataUrl: response.dataUrl,
         });
         if (ocrResult?.text) {
-          const terms = this.extractTerms(ocrResult.words || []);
-          this.onScreenText({
-            fullText: ocrResult.text, terms,
-            confidence: ocrResult.confidence || 0,
-            timestamp: Date.now(),
-          });
+          // OCR 置信度过滤：低于 0.5 的结果不可靠
+          const confidence = ocrResult.confidence || 0;
+          if (confidence < 0.5) {
+            console.debug(`[LinguaSync] OCR confidence too low (${confidence.toFixed(2)}), skipping`);
+          } else {
+            const terms = this.extractTerms(ocrResult.words || []);
+            this.onScreenText({
+              fullText: ocrResult.text, terms,
+              confidence,
+              timestamp: Date.now(),
+            });
+          }
         }
       }
     } catch { /* ignore */ }
@@ -541,12 +568,23 @@ class TermExtractor {
 
   /** 从英文文本中提取专业术语 */
   extract(text: string): string[] {
+    if (!text || text.trim().length === 0) return [];
     const terms: string[] = [];
     const words = text.split(/\s+/);
     const seen = new Set<string>();
+    // 噪声黑名单：常见误判词
+    const noiseSet = new Set([
+      'THE', 'AND', 'FOR', 'NOT', 'HIS', 'HER', 'HAS', 'HAD', 'HIM',
+      'ALL', 'ITS', 'WAS', 'ARE', 'BUT', 'WHO', 'OUR', 'YOU', 'SHE',
+      'HER', 'HIM', 'THEY', 'THAT', 'THIS', 'WITH', 'FROM', 'HAVE',
+      'II', 'III', 'IV', 'VI', 'VII', 'VIII', 'IX', 'XI', 'XII',
+    ]);
     for (const word of words) {
       const clean = word.replace(/[.,;:!?'")(\]\[]/g, '');
+      // 过滤：长度 < 2、纯数字、罗马数字噪声
       if (clean.length < 2) continue;
+      if (/^\d+(\.\d+)?$/.test(clean)) continue; // 纯数字
+      if (noiseSet.has(clean.toUpperCase())) continue; // 常见误判
       const upper = clean.toUpperCase();
       if (this.localDict.has(upper) && !seen.has(upper)) {
         terms.push(upper);
@@ -600,24 +638,34 @@ class TooltipEngine {
 
   /** 获取术语定义：本地词典优先，失败走 Wikipedia */
   async getDefinition(term: string): Promise<TermDefinition> {
-    const localDef = this.extractor.getLocalDef(term);
-    if (localDef) return { term, definition: localDef, source: 'local' };
-    if (this.cache.has(term)) {
-      return { term, definition: this.cache.get(term)!, source: 'wiki' };
+    // 输入校验
+    if (!term || term.trim().length === 0) {
+      return { term: term || '', definition: '无效术语', source: 'local' };
+    }
+    const cleanTerm = term.trim().slice(0, 100); // 防止过长请求
+    const localDef = this.extractor.getLocalDef(cleanTerm);
+    if (localDef) return { term: cleanTerm, definition: localDef, source: 'local' };
+    if (this.cache.has(cleanTerm)) {
+      return { term: cleanTerm, definition: this.cache.get(cleanTerm)!, source: 'wiki' };
     }
     try {
+      // 8 秒超时
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
       const r = await fetch(
-        `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(term)}`
+        `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanTerm)}`,
+        { signal: controller.signal }
       );
+      clearTimeout(timer);
       if (r.ok) {
         const d = await r.json();
-        if (d.extract) {
-          this.cache.set(term, d.extract);
-          return { term, definition: d.extract, source: 'wiki' };
+        if (d && typeof d === 'object' && d.extract && typeof d.extract === 'string') {
+          this.cache.set(cleanTerm, d.extract);
+          return { term: cleanTerm, definition: d.extract, source: 'wiki' };
         }
       }
     } catch { /* */ }
-    return { term, definition: `专业术语: ${term}`, source: 'local' };
+    return { term: cleanTerm, definition: `专业术语: ${cleanTerm}`, source: 'local' };
   }
 
   /** 在术语元素上方显示 Tooltip */
@@ -702,6 +750,13 @@ class MindMapBuilder {
     if (similarity(original.trim(), this.lastSentence.trim()) > 0.8) return;
     this.lastSentence = original;
 
+    // 思维导图节点上限保护（总计不超过 50 个节点）
+    const totalNodes = this.countNodes(this.root);
+    if (totalNodes >= 50) {
+      // 达到上限后不再添加新节点，避免内存膨胀
+      return;
+    }
+
     const isNewTopic = this.topicPatterns.some(p => p.test(original) || p.test(translated));
 
     if (isNewTopic || this.root.children.length === 0) {
@@ -742,6 +797,13 @@ class MindMapBuilder {
       if (found) return found;
     }
     return null;
+  }
+
+  /** 递归统计节点总数 */
+  private countNodes(node: MindMapNode): number {
+    let count = 1;
+    for (const child of node.children) count += this.countNodes(child);
+    return count;
   }
 
   /** 导出为 Markdown */
@@ -1164,18 +1226,32 @@ class FloatingWidget {
     // 思维导图导出
     this.els.mindmapExportMd.addEventListener('click', () => this.onMindmapExportMd());
     this.els.mindmapExportJson.addEventListener('click', () => this.onMindmapExportJson());
-    // Q&A 输入框 Enter 提交
+    // Q&A 输入框 Enter 提交（带去抖 + 长度限制）
+    let qaLastSubmit = 0;
+    const QA_MAX_LENGTH = 200;
+    const QA_DEBOUNCE_MS = 800;
     this.els.qaInput.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         e.stopPropagation();
+        const now = Date.now();
+        if (now - qaLastSubmit < QA_DEBOUNCE_MS) return; // 去抖
         const question = (this.els.qaInput as HTMLInputElement).value.trim();
-        if (question.length > 0) {
-          this.onQuestion(question);
-          (this.els.qaInput as HTMLInputElement).value = '';
+        if (question.length === 0) return;
+        if (question.length > QA_MAX_LENGTH) {
+          // 截断并提示
+          (this.els.qaInput as HTMLInputElement).value = question.slice(0, QA_MAX_LENGTH);
+          this.els.qaInput.setAttribute('placeholder', `问题最长 ${QA_MAX_LENGTH} 字，已自动截断`);
+          setTimeout(() => this.els.qaInput.setAttribute('placeholder', '问 AI：讲者刚才提到的...'), 2000);
+          return;
         }
+        qaLastSubmit = now;
+        this.onQuestion(question);
+        (this.els.qaInput as HTMLInputElement).value = '';
       }
     });
+    // 输入框 maxLength 属性兜底
+    (this.els.qaInput as HTMLInputElement).maxLength = QA_MAX_LENGTH + 20; // 留余量
     // 阻止输入框快捷键冒泡
     this.els.qaInput.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.altKey || e.ctrlKey) { e.stopPropagation(); }
@@ -1659,28 +1735,57 @@ const DEBOUNCE_MS = 150;
  */
 function translateImmediate(text: string, context: TranslationResult[], screenTerms: string[] = []): Promise<string> {
   return new Promise((resolve) => {
+    // 输入校验：空文本直接返回
+    if (!text || text.trim().length === 0) { resolve(text); return; }
+
     const contextTexts = context.slice(-3).map((r) => `${r.original} → ${r.translated}`);
     // 如果有屏幕术语，添加到上下文中
     if (screenTerms.length > 0) {
       contextTexts.push(`[Screen terms: ${screenTerms.slice(0, 8).join(', ')}]`);
     }
+
+    // 超时保护：如果后台 12 秒无响应则降级到 fetchFree
+    let settled = false;
+    const fallbackTimer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        console.warn('[LinguaSync] Background translate timeout (12s), fallback to fetchFree');
+        fetchFree(text).then(resolve);
+      }
+    }, 12000);
+
     try {
       chrome.runtime.sendMessage(
         { type: 'TRANSLATE', text, backend: 'mymemory', apiKey: '', context: contextTexts },
         (response) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(fallbackTimer);
           if (chrome.runtime.lastError) {
             console.warn('[LinguaSync] sendMessage error:', chrome.runtime.lastError.message);
             fetchFree(text).then(resolve);
             return;
           }
-          if (!response?.translated || response.translated === text) {
+          // 校验响应格式
+          if (!response || typeof response !== 'object') {
             fetchFree(text).then(resolve);
             return;
           }
-          resolve(response.translated);
+          const translated = response.translated;
+          if (!translated || typeof translated !== 'string' || translated.trim().length === 0) {
+            fetchFree(text).then(resolve);
+            return;
+          }
+          // 翻译不应与原文完全相同
+          if (translated.trim() === text.trim()) {
+            fetchFree(text).then(resolve);
+            return;
+          }
+          resolve(translated);
         }
       );
     } catch {
+      if (!settled) { settled = true; clearTimeout(fallbackTimer); }
       fetchFree(text).then(resolve);
     }
   });
@@ -1698,35 +1803,61 @@ function translateDebounced(text: string, context: TranslationResult[], screenTe
 }
 
 async function fetchFree(text: string): Promise<string> {
-  // 尝试多个翻译源，依次降级
+  // 输入校验：空文本直接返回
+  if (!text || text.trim().length === 0) return text;
+
   const encoded = encodeURIComponent(text);
+
+  /** 带超时的 fetch 封装（10 秒） */
+  const fetchWithTimeout = (url: string, timeoutMs = 10000): Promise<Response> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
+  };
+
+  /** 校验翻译结果：非空、非原文、长度合理 */
+  const isValidTranslation = (translated: string, original: string): boolean => {
+    if (!translated || translated.trim().length === 0) return false;
+    if (translated.trim() === original.trim()) return false;
+    // 翻译结果不应超过原文 5 倍（防止异常响应）
+    if (translated.length > original.length * 5) return false;
+    return true;
+  };
 
   // 1) MyMemory
   try {
-    const r = await fetch(`https://api.mymemory.translated.net/get?q=${encoded}&langpair=en|zh-CN`);
-    if (r.ok) {
+    const r = await fetchWithTimeout(`https://api.mymemory.translated.net/get?q=${encoded}&langpair=en|zh-CN`);
+    if (!r.ok) { console.warn(`[LinguaSync] MyMemory HTTP ${r.status}`); }
+    else {
       const d = await r.json();
-      if (d.responseStatus === 200 && d.responseData?.translatedText) {
+      if (d && typeof d === 'object' && d.responseStatus === 200 && d.responseData?.translatedText) {
         const t = d.responseData.translatedText;
-        if (t !== text) return t;
+        if (isValidTranslation(t, text)) return t;
       }
     }
-  } catch (e) { console.warn('[LinguaSync] MyMemory failed:', e); }
+  } catch (e: any) {
+    const reason = e?.name === 'AbortError' ? 'timeout (10s)' : e?.message || e;
+    console.warn('[LinguaSync] MyMemory failed:', reason);
+  }
 
   // 2) Google Translate (免费端点)
   try {
-    const r = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q=${encoded}`);
-    if (r.ok) {
+    const r = await fetchWithTimeout(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q=${encoded}`);
+    if (!r.ok) { console.warn(`[LinguaSync] Google Translate HTTP ${r.status}`); }
+    else {
       const d = await r.json();
-      if (d && d[0]) {
+      if (Array.isArray(d) && Array.isArray(d[0])) {
         const t = d[0].map((item: any[]) => item[0]).filter(Boolean).join('');
-        if (t && t !== text) return t;
+        if (isValidTranslation(t, text)) return t;
       }
     }
-  } catch (e) { console.warn('[LinguaSync] Google Translate failed:', e); }
+  } catch (e: any) {
+    const reason = e?.name === 'AbortError' ? 'timeout (10s)' : e?.message || e;
+    console.warn('[LinguaSync] Google Translate failed:', reason);
+  }
 
   // 3) 如果都失败，返回原文
-  console.warn('[LinguaSync] All translation APIs failed');
+  console.warn('[LinguaSync] All translation APIs failed, returning original text');
   return text;
 }
 
@@ -1776,6 +1907,20 @@ class Controller {
       chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, (cfg: Record<string, any>) => {
         if (!chrome.runtime.lastError && cfg) {
           this.config = { ...this.config, ...cfg } as AppConfig;
+          // 校验语言格式 (xx-XX)
+          if (this.config.defaultLanguage && !/^[a-z]{2}(-[A-Z]{2})?$/.test(this.config.defaultLanguage)) {
+            this.config.defaultLanguage = 'en-US';
+          }
+          // 校验音频模式
+          if (!['microphone', 'tabAudio'].includes(this.config.audioMode)) {
+            this.config.audioMode = 'microphone';
+          }
+          // 校验布尔值字段
+          for (const key of ['ttsEnabled', 'subtitleEnabled', 'screenVisionEnabled', 'tooltipsEnabled', 'mindmapEnabled', 'autoStart'] as const) {
+            if (typeof this.config[key] !== 'boolean') {
+              (this.config as any)[key] = false;
+            }
+          }
           this.speech.setLang(this.config.defaultLanguage || 'en-US');
           if (this.config.audioMode === 'tabAudio') this.useTabAudio = true;
           if (this.config.ttsEnabled) this.tts.setEnabled(true);
@@ -1900,8 +2045,14 @@ class Controller {
   // --- 开关控制 ---
   private async toggle() {
     if (!this.widget) return;
-    if (!this.speech.isSupported()) {
-      alert('LinguaSync Pro: 浏览器不支持 Web Speech API\n请使用 Chrome 或 Edge');
+    // 浏览器能力综合检测
+    const capabilities: string[] = [];
+    if (!this.speech.isSupported()) capabilities.push('Web Speech API (语音识别)');
+    if (!this.tts.isSupported()) capabilities.push('Speech Synthesis (语音合成)');
+    if (!navigator.mediaDevices?.getDisplayMedia) capabilities.push('getDisplayMedia (标签页音频)');
+    if (capabilities.length > 0 && !this.speech.isSupported()) {
+      // 核心能力缺失，阻止启动
+      alert(`LinguaSync Pro: 浏览器缺少以下核心能力:\n\n• ${capabilities.join('\n• ')}\n\n请使用最新版 Chrome 或 Edge 浏览器。`);
       return;
     }
 
@@ -1949,6 +2100,10 @@ class Controller {
 
   // --- 切换 TTS 语音朗读 ---
   private toggleTts() {
+    if (!this.tts.isSupported()) {
+      console.warn('[LinguaSync] TTS not supported in this browser');
+      return;
+    }
     const newState = !this.tts.isEnabled();
     this.tts.setEnabled(newState);
     this.widget?.setTtsEnabled(newState);
@@ -2099,8 +2254,24 @@ class Controller {
 
   // --- 思维导图导出: JSON 到剪贴板 ---
   private exportMindmapJson() {
+    const tree = this.mindmap.getTree();
+    if (tree.children.length === 0) {
+      console.warn('[LinguaSync] Mind map is empty, skip export');
+      return;
+    }
     const json = this.mindmap.toJSON();
-    if (this.mindmap.getTree().children.length === 0) return;
+    // 校验 Clipboard API 可用性
+    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+      // 降级：创建下载文件
+      const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `linguasync_mindmap_${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
     navigator.clipboard.writeText(json).then(() => {
       // 短暂提示
       const btn = this.widget?.['els']?.mindmapExportJson as HTMLElement | undefined;
@@ -2109,7 +2280,7 @@ class Controller {
         btn.innerHTML = '✓ 已复制';
         setTimeout(() => { btn.innerHTML = orig; }, 1500);
       }
-    }).catch(() => { /* */ });
+    }).catch(() => { /* 剪贴板权限被拒绝 */ });
   }
 
   // --- 开小差补救: Ctrl+Enter ---
@@ -2122,6 +2293,17 @@ class Controller {
   // --- Q&A 问答处理 ---
   private handleQuestion(question: string) {
     if (!this.widget) return;
+    // 输入校验
+    if (!question || question.trim().length === 0) return;
+    if (question.length > 200) question = question.slice(0, 200);
+    // 历史为空时给出提示
+    if (this.history.length === 0) {
+      this.widget.addQAResult({
+        question, answers: [],
+        timestamp: Date.now(),
+      });
+      return;
+    }
     const result = this.qaEngine.search(question, this.history);
     this.widget.addQAResult(result);
   }
