@@ -441,7 +441,7 @@ class FloatingWidget {
   }
 
   private centerAtBottom() {
-    this.pos = { x: Math.max(10, (window.innerWidth - 580) / 2), y: window.innerHeight - 90 };
+    this.pos = { x: Math.max(10, (window.innerWidth - 400) / 2), y: window.innerHeight - 90 };
     this.root.style.left = `${this.pos.x}px`;
     this.root.style.top = `${this.pos.y}px`;
   }
@@ -495,7 +495,7 @@ class FloatingWidget {
     item.className = 'ls-fl-transcript-item';
     const t = new Date(result.timestamp);
     const ts = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
-    item.innerHTML = `<div class="ls-fl-ts-ts">${ts}</div><div class="ls-fl-ts-orig">${esc(result.original)}</div><div class="ls-fl-ts-zh">${esc(result.translated)}</div>`;
+    item.innerHTML = `<div class="ls-fl-ts-ts">${ts}</div><div><span class="ls-fl-ts-orig">${esc(result.original)}</span><span class="ls-fl-ts-zh">${esc(result.translated)}</span></div>`;
     this.els.transcriptList.appendChild(item);
     this.els.transcriptList.scrollTop = this.els.transcriptList.scrollHeight;
     const count = this.els.transcriptList.children.length;
