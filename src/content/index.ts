@@ -391,7 +391,7 @@ class FloatingWidget {
     window.addEventListener('mousemove', (e: MouseEvent) => {
       if (!this.dragging) return;
       this.pos = {
-        x: Math.max(0, Math.min(window.innerWidth - 300, e.clientX - this.dragStart.x)),
+        x: Math.max(0, Math.min(window.innerWidth - 280, e.clientX - this.dragStart.x)),
         y: Math.max(0, Math.min(window.innerHeight - 60, e.clientY - this.dragStart.y)),
       };
       this.root.style.left = `${this.pos.x}px`;
@@ -441,7 +441,7 @@ class FloatingWidget {
   }
 
   private centerAtBottom() {
-    this.pos = { x: Math.max(10, (window.innerWidth - 400) / 2), y: window.innerHeight - 90 };
+    this.pos = { x: Math.max(10, (window.innerWidth - 320) / 2), y: window.innerHeight - 90 };
     this.root.style.left = `${this.pos.x}px`;
     this.root.style.top = `${this.pos.y}px`;
   }
