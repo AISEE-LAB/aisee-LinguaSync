@@ -775,3 +775,219 @@
   color: #484F58;
   text-align: center;
 }
+
+/* ===== Q&A 问答面板 ===== */
+
+.ls-fl-qa-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.ls-fl-qa-history {
+  flex: 1;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 8px 0;
+  scroll-behavior: smooth;
+}
+.ls-fl-qa-history::-webkit-scrollbar { width: 6px; }
+.ls-fl-qa-history::-webkit-scrollbar-track { background: #0D1117; }
+.ls-fl-qa-history::-webkit-scrollbar-thumb { background: #30363D; border-radius: 3px; }
+.ls-fl-qa-history::-webkit-scrollbar-thumb:hover { background: #484F58; }
+
+.ls-fl-qa-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 30px 20px;
+  color: #484F58;
+}
+.ls-fl-qa-empty svg { opacity: 0.3; color: #30363D; }
+.ls-fl-qa-empty span {
+  font-size: 12px;
+  color: #484F58;
+  text-align: center;
+}
+
+/* Q&A 命令行输入栏 */
+.ls-fl-qa-input-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #010409;
+  border-top: 1px solid #21262D;
+  flex-shrink: 0;
+}
+.ls-fl-qa-prompt {
+  color: #3FB950;
+  font-size: 14px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  text-shadow: 0 0 6px rgba(63,185,80,0.3);
+  user-select: none;
+}
+.ls-fl-qa-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #C9D1D9;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'PingFang SC', 'Microsoft YaHei', monospace;
+  caret-color: #3FB950;
+}
+.ls-fl-qa-input::placeholder {
+  color: #30363D;
+}
+
+/* Q&A 结果卡片 */
+.ls-qa-card {
+  margin: 4px 8px 8px 8px;
+  border-radius: 6px;
+  border: 1px solid #21262D;
+  background: #0D1117;
+  overflow: hidden;
+}
+.ls-qa-question {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #161B22;
+  border-bottom: 1px solid #21262D;
+  font-size: 12px;
+  color: #C9D1D9;
+  font-weight: 500;
+}
+.ls-qa-q-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(88,166,255,0.15);
+  border: 1px solid rgba(88,166,255,0.3);
+  color: #58A6FF;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.ls-qa-answers { padding: 4px 0; }
+.ls-qa-match {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 12px;
+  margin: 2px 6px;
+  border-radius: 4px;
+  border-left: 3px solid transparent;
+  transition: all 0.15s ease;
+}
+.ls-qa-match:hover {
+  background: #161B22;
+  border-left-color: #58A6FF;
+}
+.ls-qa-match-ts {
+  font-size: 10px;
+  color: #6E7681;
+  margin-bottom: 3px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+.ls-qa-match-orig {
+  font-size: 12px;
+  color: #8B949E;
+  display: block;
+  margin-bottom: 2px;
+}
+.ls-qa-match-zh {
+  font-size: 13px;
+  color: #3FB950;
+  font-weight: 500;
+  display: block;
+  text-shadow: 0 0 6px rgba(63,185,80,0.1);
+}
+.ls-qa-no-match {
+  padding: 12px 16px;
+  color: #484F58;
+  font-size: 12px;
+  text-align: center;
+}
+
+/* ===== 开小差补救摘要卡片 ===== */
+
+.ls-catchup-card {
+  margin: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(210,153,34,0.3);
+  background: rgba(210,153,34,0.04);
+  overflow: hidden;
+  animation: ls-catchup-in 0.3s ease;
+}
+@keyframes ls-catchup-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.ls-catchup-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: rgba(210,153,34,0.08);
+  border-bottom: 1px solid rgba(210,153,34,0.15);
+  font-size: 11px;
+  font-weight: 600;
+  color: #D29922;
+}
+.ls-catchup-header svg { color: #D29922; flex-shrink: 0; }
+.ls-catchup-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: #6E7681;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.ls-catchup-close:hover { color: #C9D1D9; }
+.ls-catchup-body { padding: 6px 8px; }
+.ls-catchup-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 4px;
+}
+.ls-catchup-num {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(210,153,34,0.12);
+  border: 1px solid rgba(210,153,34,0.3);
+  color: #D29922;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+.ls-catchup-text { flex: 1; }
+.ls-catchup-zh {
+  display: block;
+  font-size: 13px;
+  color: #C9D1D9;
+  line-height: 1.5;
+}
+.ls-catchup-ts {
+  display: block;
+  font-size: 10px;
+  color: #6E7681;
+  margin-top: 2px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
