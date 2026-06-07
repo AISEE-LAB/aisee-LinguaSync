@@ -988,7 +988,12 @@ function translateImmediate(text: string, context: TranslationResult[], screenTe
       chrome.runtime.sendMessage(
         { type: 'TRANSLATE', text, backend: 'mymemory', apiKey: '', context: contextTexts },
         (response) => {
-          if (chrome.runtime.lastError || !response?.translated) {
+          if (chrome.runtime.lastError) {
+            console.warn('[LinguaSync] sendMessage error:', chrome.runtime.lastError.message);
+            fetchFree(text).then(resolve);
+            return;
+          }
+          if (!response?.translated || response.translated === text) {
             fetchFree(text).then(resolve);
             return;
           }
@@ -1013,11 +1018,35 @@ function translateDebounced(text: string, context: TranslationResult[], screenTe
 }
 
 async function fetchFree(text: string): Promise<string> {
+  // 尝试多个翻译源，依次降级
+  const encoded = encodeURIComponent(text);
+
+  // 1) MyMemory
   try {
-    const r = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|zh-CN`);
-    const d = await r.json();
-    if (d.responseStatus === 200) return d.responseData.translatedText;
-  } catch { /* */ }
+    const r = await fetch(`https://api.mymemory.translated.net/get?q=${encoded}&langpair=en|zh-CN`);
+    if (r.ok) {
+      const d = await r.json();
+      if (d.responseStatus === 200 && d.responseData?.translatedText) {
+        const t = d.responseData.translatedText;
+        if (t !== text) return t;
+      }
+    }
+  } catch (e) { console.warn('[LinguaSync] MyMemory failed:', e); }
+
+  // 2) Google Translate (免费端点)
+  try {
+    const r = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q=${encoded}`);
+    if (r.ok) {
+      const d = await r.json();
+      if (d && d[0]) {
+        const t = d[0].map((item: any[]) => item[0]).filter(Boolean).join('');
+        if (t && t !== text) return t;
+      }
+    }
+  } catch (e) { console.warn('[LinguaSync] Google Translate failed:', e); }
+
+  // 3) 如果都失败，返回原文
+  console.warn('[LinguaSync] All translation APIs failed');
   return text;
 }
 

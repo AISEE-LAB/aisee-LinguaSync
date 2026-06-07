@@ -52,8 +52,23 @@ async function handleTranslation(
       `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|zh-CN`
     );
     const data = await res.json();
-    if (data.responseStatus === 200) {
-      return { translated: data.responseData.translatedText };
+    if (data.responseStatus === 200 && data.responseData?.translatedText) {
+      const t = data.responseData.translatedText;
+      if (t !== text) return { translated: t };
+    }
+  } catch {
+    // ignore
+  }
+
+  // Google Translate 免费端点 (备用)
+  try {
+    const res = await fetch(
+      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q=${encodeURIComponent(text)}`
+    );
+    const data = await res.json();
+    if (data && data[0]) {
+      const translated = data[0].map((item: any[]) => item[0]).filter(Boolean).join('');
+      if (translated && translated !== text) return { translated };
     }
   } catch {
     // ignore
