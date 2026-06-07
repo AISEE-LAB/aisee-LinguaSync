@@ -1215,3 +1215,167 @@
   font-size: 10px;
   padding: 4px 6px;
 }
+
+/* ========== 翻译置信度色条 ========== */
+
+.ls-fl-conf-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 1px;
+  opacity: 0.7;
+}
+.ls-fl-transcript-item {
+  position: relative;
+  padding-left: 8px;
+}
+
+/* ========== 词汇本面板 ========== */
+
+.ls-fl-vocab-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ls-fl-vocab-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+.ls-fl-vocab-export {
+  background: transparent;
+  border: 1px solid #30363D;
+  color: #8B949E;
+  font-size: 10px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s;
+}
+.ls-fl-vocab-export:hover { border-color: #58A6FF; color: #58A6FF; }
+.ls-fl-vocab-list {
+  flex: 1;
+  overflow-y: auto;
+}
+.ls-fl-vocab-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  color: #484F58;
+  font-size: 11px;
+  gap: 8px;
+}
+.ls-vocab-banner {
+  background: rgba(210, 168, 255, 0.1);
+  border: 1px solid rgba(210, 168, 255, 0.3);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #D2A8FF;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.ls-vocab-item {
+  padding: 6px 8px;
+  border-bottom: 1px solid #21262D;
+}
+.ls-vocab-item.ls-vocab-mastered {
+  opacity: 0.5;
+}
+.ls-vocab-term {
+  font-size: 13px;
+  font-weight: 600;
+  color: #D2A8FF;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+.ls-vocab-review {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #F85149;
+  color: #FFFFFF;
+  font-size: 9px;
+  font-weight: 700;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.ls-vocab-def {
+  font-size: 11px;
+  color: #8B949E;
+  margin-top: 2px;
+  line-height: 1.4;
+}
+.ls-vocab-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.ls-vocab-freq {
+  font-size: 10px;
+  color: #F0883E;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+.ls-vocab-time {
+  font-size: 10px;
+  color: #6E7681;
+}
+.ls-vocab-master-btn {
+  background: transparent;
+  border: 1px solid #30363D;
+  color: #3FB950;
+  font-size: 12px;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+.ls-vocab-master-btn:hover { border-color: #3FB950; background: rgba(63, 185, 80, 0.1); }
+.ls-vocab-del-btn {
+  background: transparent;
+  border: none;
+  color: #F85149;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+  opacity: 0.4;
+  transition: opacity 0.2s;
+}
+.ls-vocab-del-btn:hover { opacity: 1; }
+
+/* ========== 摘要按钮 ========== */
+
+.ls-fl-summary-btn {
+  background: transparent;
+  border: 1px solid #30363D;
+  color: #8B949E;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s;
+}
+.ls-fl-summary-btn:hover { border-color: #D2A8FF; color: #D2A8FF; }
