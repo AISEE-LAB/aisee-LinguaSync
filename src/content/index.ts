@@ -13,6 +13,7 @@ interface TranslationResult {
   original: string;
   translated: string;
   timestamp: number;
+  corrected: number;
 }
 
 interface AppConfig {
@@ -496,11 +497,25 @@ class FloatingWidget {
     const t = new Date(result.timestamp);
     const ts = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
     item.innerHTML = `<div class="ls-fl-ts-ts">${ts}</div><div><span class="ls-fl-ts-orig">${esc(result.original)}</span><span class="ls-fl-ts-zh">${esc(result.translated)}</span></div>`;
+    item.dataset.ts = String(result.timestamp);
     this.els.transcriptList.appendChild(item);
     this.els.transcriptList.scrollTop = this.els.transcriptList.scrollHeight;
     const count = this.els.transcriptList.children.length;
     this.els.histCount.textContent = String(count);
     this.els.histCount.style.display = count > 0 ? '' : 'none';
+  }
+
+  /** 原地更新一条会议记录（自纠正后调用） */
+  updateHistoryItem(result: TranslationResult) {
+    const item = this.els.transcriptList.querySelector(
+      `[data-ts="${result.timestamp}"]`
+    ) as HTMLElement | null;
+    if (!item) return;
+    const zhEl = item.querySelector('.ls-fl-ts-zh');
+    if (zhEl) zhEl.textContent = result.translated;
+    // 闪烁高亮提示已修正
+    item.classList.add('ls-fl-corrected');
+    setTimeout(() => item.classList.remove('ls-fl-corrected'), 1500);
   }
 
   /** 添加一条智能待办 */
@@ -539,6 +554,80 @@ function esc(s: string): string {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+// ========== 自纠正引擎 ==========
+
+/** Levenshtein 编辑距离 */
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
+    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+  );
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+/** 字符串相似度 (0~1，1 = 完全相同) */
+function similarity(a: string, b: string): number {
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return 1;
+  return 1 - levenshtein(a, b) / maxLen;
+}
+
+class SelfCorrectionEngine {
+  private lastInterim = '';
+  /** 被大幅修正的 interim 原文，翻译可能不准 */
+  private uncertainOriginals = new Set<string>();
+
+  /** 记录 interim，final 时比对差异 */
+  recordInterim(text: string) { this.lastInterim = text; }
+
+  /**
+   * final 到达时调用。对比 interim → final 差异，
+   * 如果差异大（< 0.6 相似度）则标记该句翻译可能不准。
+   */
+  checkFinal(finalText: string): boolean {
+    if (!this.lastInterim) { this.lastInterim = ''; return false; }
+    const sim = similarity(this.lastInterim.trim(), finalText.trim());
+    this.lastInterim = '';
+    if (sim < 0.6) {
+      this.uncertainOriginals.add(finalText);
+      return true; // 标记为不确定
+    }
+    return false;
+  }
+
+  /**
+   * 从历史中找出需要重翻译的条目。
+   * 条件：被标记为不确定、且之后积累了 >= 2 条新上下文。
+   */
+  getCorrectionTargets(history: TranslationResult[]): TranslationResult[] {
+    const targets: TranslationResult[] = [];
+    for (let i = 0; i < history.length; i++) {
+      const entry = history[i];
+      const isUncertain = this.uncertainOriginals.has(entry.original);
+      const contextAfter = history.length - 1 - i;
+      if ((isUncertain || entry.corrected > 0) && contextAfter >= 2) {
+        targets.push(entry);
+      }
+    }
+    // 最多返回最近 2 条，避免过多 API 调用
+    return targets.slice(-2);
+  }
+
+  /** 重翻译完成后调用，移除不确定标记 */
+  markCorrected(original: string) {
+    this.uncertainOriginals.delete(original);
+  }
 }
 
 // ========== 语音识别引擎 ==========
@@ -679,6 +768,7 @@ class Controller {
   private subtitleOverlay = new SubtitleOverlay();
   private speech = new SpeechEngine('en-US');
   private tabAudio = new TabAudioCapture();
+  private correction = new SelfCorrectionEngine();
   private history: TranslationResult[] = [];
   private currentVideo: HTMLVideoElement | null = null;
   private useTabAudio = false;
@@ -712,6 +802,7 @@ class Controller {
   private setupSpeech() {
     this.speech.onInterim = async (text) => {
       if (!this.widget) return;
+      this.correction.recordInterim(text);
       // 立即显示原文 interim（不等翻译）
       this.subtitleOverlay.showInterim(text, '⋯');
       // 只要有文字就翻译（降低阈值）
@@ -729,14 +820,18 @@ class Controller {
       if (!this.widget) return;
       // 取消任何挂起的防抖翻译
       if (translateTimer) { clearTimeout(translateTimer); translateTimer = null; }
+      // 检测 interim → final 差异，标记不确定的翻译
+      this.correction.checkFinal(text);
       // 立即翻译最终结果（带上下文）
       const zh = await translateImmediate(text, this.history);
-      const result: TranslationResult = { original: text, translated: zh, timestamp: Date.now() };
+      const result: TranslationResult = { original: text, translated: zh, timestamp: Date.now(), corrected: 0 };
       this.history.push(result);
       this.widget.addHistory(result);
       this.subtitleOverlay.showFinal(text, zh);
       // 尝试从译文提取智能待办
       this.extractTodos(zh);
+      // 触发历史自纠正
+      this.runCorrections();
     };
 
     this.speech.onError = (err) => { console.warn('[LinguaSync]', err); };
@@ -913,6 +1008,24 @@ class Controller {
           }
         );
       } catch { /* */ }
+    }
+  }
+
+  // --- 自纠正：重新翻译不确定的历史条目 ---
+  private async runCorrections() {
+    const targets = this.correction.getCorrectionTargets(this.history);
+    for (const entry of targets) {
+      const idx = this.history.indexOf(entry);
+      if (idx < 0) continue;
+      const context = this.history.slice(Math.max(0, idx - 3), idx);
+      const newTranslation = await translateImmediate(entry.original, context);
+      if (newTranslation !== entry.translated) {
+        entry.translated = newTranslation;
+        entry.corrected = (entry.corrected || 0) + 1;
+        this.correction.markCorrected(entry.original);
+        // 更新会议记录面板（闪烁高亮）
+        this.widget?.updateHistoryItem(entry);
+      }
     }
   }
 }
